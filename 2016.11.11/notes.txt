@@ -1,0 +1,41 @@
+Go to https://github.com/ledger/ledger/tree/master and switch the branch to
+release/2.6.3 and click the "Clone or Download" button and Download ZIP. Build
+the package per the instructions (./acprep dependencies && ./acprep && make)
+
+$ gdb -q ./ledger
+Reading symbols from ./ledger...done.
+(gdb) r -f ~/NotQuite0DayFriday/2016.11.11/oops.dat xml
+Starting program: ./ledger -f ~/NotQuite0DayFriday/2016.11.11/oops.dat xml
+
+Program received signal SIGSEGV, Segmentation fault.
+ledger::value_expr_t::compute (this=0x0, result=..., details=..., context=0x0) at valexpr.cc:139
+139       switch (kind) {
+(gdb) x/i $rip
+=> 0x5730ed <ledger::value_expr_t::compute(ledger::value_t&, ledger::details_t const&, ledger::value_expr_t*) const+93>:        cmp    DWORD PTR [rdi],0x3f
+(gdb) info reg rdi
+rdi            0x0      0
+(gdb) bt
+#0  ledger::value_expr_t::compute (this=0x0, result=..., details=..., context=0x0) at valexpr.cc:139
+#1  0x0000000000573ea0 in ledger::value_expr_t::compute (this=this@entry=0x8389f0, result=..., details=..., context=context@entry=0x0) at valexpr.cc:696
+#2  0x000000000057c974 in ledger::compute_amount (expr=0x8389f0, amt=..., xact=xact@entry=0x838560, context=context@entry=0x0) at valexpr.cc:27
+#3  0x000000000055a379 in ledger::parse_amount_expr (in=..., amount=..., xact=0x838560, flags=flags@entry=8) at textual.cc:100
+#4  0x000000000055d404 in ledger::parse_transaction (line=line@entry=0x811320 <ledger::textual_parser_t::parse(std::istream&, ledger::config_t&, ledger::journal_t*, ledger::account_t*, std::string const*)::line> " Assets:Checking         $-23.00*",
+    account=account@entry=0x835b50, entry=entry@entry=0x837f40) at textual.cc:208
+#5  0x00000000005615d4 in ledger::parse_entry (in=...,
+    line=line@entry=0x811320 <ledger::textual_parser_t::parse(std::istream&, ledger::config_t&, ledger::journal_t*, ledger::account_t*, std::string const*)::line> " Assets:Checking         $-23.00*", master=0x835b50, parser=...,
+    pos=@0x7fffffffcaa0: 49, pos@entry=@0x7fffffffcaa0: 0) at textual.cc:462
+#6  0x0000000000565fdf in ledger::textual_parser_t::parse (this=<optimized out>, in=..., config=..., journal=<optimized out>, master=<optimized out>, original_file=<optimized out>) at textual.cc:885
+#7  0x000000000053f85d in parse_journal (original_file=0x0, master=0x835b50, journal=0x835aa0, config=..., in=...) at parser.cc:72
+#8  ledger::parse_journal_file (path="~/NotQuite0DayFriday/2016.11.11/oops.dat", config=..., journal=journal@entry=0x835aa0, master=master@entry=0x0, original_file=original_file@entry=0x0)
+    at parser.cc:92
+#9  0x00000000005417ae in ledger::parse_ledger_data (config=..., journal=0x835aa0, cache_parser=cache_parser@entry=0x0, xml_parser=xml_parser@entry=0x0, stdin_parser=stdin_parser@entry=0x0) at parser.cc:176
+#10 0x000000000040aa0a in parse_and_report (config=..., journal=..., report=..., argc=argc@entry=4, argv=argv@entry=0x7fffffffe008, envp=envp@entry=0x7fffffffe030) at main.cc:166
+#11 0x0000000000407e22 in main (argc=4, argv=0x7fffffffe008, envp=0x7fffffffe030) at main.cc:476
+
+
+So we have a null pointer dereference here.  If you're not familiar with jump
+tables, now is a great time to learn.  Between the comparison to a number and
+the helpful hint of showing us the line of source code which caused the error
+is a switch statement, we can guess that it probably had 0x3f (63) possible
+cases. That seems like a lot, but a quick glance at the source code tells us
+that's probably right.
