@@ -3,14 +3,9 @@ This bug affects avprobe (and other programs) from the libav package, versions
 was inherited by them when they forked ffmpeg 0.5.4!  The file does not cause a
 crash as of version 11.5 of the library.
 
-For the ffmpeg project, it affects versions ?-0.5.4-?
+For the ffmpeg project, it affects versions 0.5 through 1.0.10. Version 1.1 is
+where it was patched.  Also please note that it might be in versions older than
+0.5, that was just the oldest version available on https://ffmpeg.org/releases/
 
 This means, in libav, the bug lasted from 2011.03.07 to 2016.02.04: ~5 years
-
-libav
-version crash?
-0.5.4   yes
-0.11.4  yes
-0.11.5  yes
-3.2     no
-
+In ffmpe, the bug lasted from AT LEAST 2009.03.10 to 2014.03.07: ~5 years
