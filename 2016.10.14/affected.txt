@@ -1,0 +1,4 @@
+This bug affects SQLite versions 3.7.16 through 3.8.8.3 (inclusive).  Version
+3.8.9 does not crash, nor does 3.7.15.2.
+
+This means the bug lasted from 2013.03.18 to 2015.04.08: 2+ years

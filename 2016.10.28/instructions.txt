@@ -1,0 +1,3 @@
+./avprobe g.ogg
+./avconv -i g.ogg out.ogg
+./ffmpeg -i g.ogg out.ogg

@@ -1,0 +1,86 @@
+Debugging avprobe from version 11.2 of libav.  To play along at home, you'll
+want to grab trhe source, compile and debug it.  To do so:
+
+mkdir libav
+cd libav
+wget https://libav.org/releases/libav-11.2.tar.xz
+tar Jxvf libav-11.2.tar.xz
+cd libav-11.2
+./configure
+make
+
+
+
+$ gdb -q ./avprobe
+Reading symbols from ./avprobe...done.
+(gdb) r ~/NotQuite0DayFriday/2016.10.28/g.ogg
+Starting program: ./avprobe ~/NotQuite0DayFriday/2016.10.28/g.ogg
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+avprobe version 11.2, Copyright (c) 2007-2014 the Libav developers
+  built on Nov  9 2016 02:08:46 with gcc 4.8 (Ubuntu 4.8.4-2ubuntu1~14.04.3)
+[h263 @ 0x14bc8c0] Format detected only with low score of 25, misdetection possible!
+[h263 @ 0x14bd220] Syntax-based Arithmetic Coding (SAC) not supported
+[h263 @ 0x14bd220] header damaged
+
+Program received signal SIGFPE, Arithmetic exception.
+ff_h263_decode_picture_header (s=0x14bdf00) at libavcodec/ituh263dec.c:1112
+1112            ff_h263_decode_mba(s);
+(gdb) x/i $rip
+=> 0x6b4330 <ff_h263_decode_picture_header+1248>:       idiv   DWORD PTR [rbx+0x2dc]
+(gdb) x/x $rbx+0x2dc
+0x14be1dc:      0x00000000
+(gdb) bt
+#0  ff_h263_decode_picture_header (s=0x14bdf00) at libavcodec/ituh263dec.c:1112
+#1  0x00000000005d03f5 in ff_h263_decode_frame (avctx=0x14bd220, data=0x14c0200, got_frame=0x7fffffffdaec, avpkt=<optimized out>) at libavcodec/h263dec.c:444
+#2  0x00000000007f375b in avcodec_decode_video2 (avctx=0x14bd220, picture=0x14c0200, got_picture_ptr=got_picture_ptr@entry=0x7fffffffdaec, avpkt=avpkt@entry=0x7fffffffdb00) at libavcodec/utils.c:1600
+#3  0x000000000051e5d7 in try_decode_frame (st=st@entry=0x14bd000, avpkt=avpkt@entry=0x14bd760, options=<optimized out>) at libavformat/utils.c:1910
+#4  0x00000000005226e7 in avformat_find_stream_info (ic=0x14bc8c0, options=options@entry=0x0) at libavformat/utils.c:2276
+#5  0x000000000044a2f8 in open_input_file (filename=0x7fffffffe2d6 "~/NotQuite0DayFriday/2016.10.28/g.ogg", fmt_ctx_ptr=0x7fffffffde48) at avprobe.c:715
+#6  probe_file (filename=0x7fffffffe2d6 "~/NotQuite0DayFriday/2016.10.28/g.ogg") at avprobe.c:763
+#7  main (argc=<optimized out>, argv=0x7fffffffe058) at avprobe.c:961
+
+
+So this is a divide by zero error.  Because this is in libavcodec, we would
+expect to see this in other libav programs.  In fact, this theory pans out:
+
+
+$ gdb -q ./avconv 
+Reading symbols from ./avconv...done.
+(gdb) r -i ~/NotQuite0DayFriday/2016.10.28/g.ogg ./g_conv.ogg
+Starting program: ~/libav/libav-11.2/avconv -i ~/NotQuite0DayFriday/2016.10.28/g.ogg ./g_conv.ogg
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+avconv version 11.2, Copyright (c) 2000-2014 the Libav developers
+  built on Nov  9 2016 02:08:46 with gcc 4.8 (Ubuntu 4.8.4-2ubuntu1~14.04.3)
+[h263 @ 0x14f0040] Format detected only with low score of 25, misdetection possible!
+[h263 @ 0x1501180] Syntax-based Arithmetic Coding (SAC) not supported
+[h263 @ 0x1501180] header damaged
+
+Program received signal SIGFPE, Arithmetic exception.
+ff_h263_decode_picture_header (s=0x1501e60) at libavcodec/ituh263dec.c:1112
+1112            ff_h263_decode_mba(s);
+(gdb) x/i $rip
+=> 0x6d6140 <ff_h263_decode_picture_header+1248>:       idiv   DWORD PTR [rbx+0x2dc]
+(gdb) x/x $rbx+0x2dc
+0x150213c:      0x00000000
+(gdb) bt
+#0  ff_h263_decode_picture_header (s=0x1501e60) at libavcodec/ituh263dec.c:1112
+#1  0x00000000005f2205 in ff_h263_decode_frame (avctx=0x1501180, data=0x1504120, got_frame=0x7fffffffd16c, avpkt=<optimized out>) at libavcodec/h263dec.c:444
+#2  0x000000000081556b in avcodec_decode_video2 (avctx=0x1501180, picture=0x1504120, got_picture_ptr=got_picture_ptr@entry=0x7fffffffd16c, avpkt=avpkt@entry=0x7fffffffd180) at libavcodec/utils.c:1600
+#3  0x00000000005403e7 in try_decode_frame (st=st@entry=0x1500ec0, avpkt=avpkt@entry=0x15016c0, options=<optimized out>) at libavformat/utils.c:1910
+#4  0x00000000005444f7 in avformat_find_stream_info (ic=0x14f0040, options=0x1501620) at libavformat/utils.c:2276
+#5  0x0000000000458b11 in open_input_file (o=o@entry=0x7fffffffd650, filename=<optimized out>) at avconv_opt.c:726
+#6  0x0000000000459c37 in open_files (inout=0xa876bc "input", open_file=0x458880 <open_input_file>, l=<optimized out>, l=<optimized out>) at avconv_opt.c:2127
+#7  avconv_parse_options (argc=argc@entry=4, argv=argv@entry=0x7fffffffe048) at avconv_opt.c:2164
+#8  0x000000000044ca39 in main (argc=4, argv=0x7fffffffe048) at avconv.c:2629
+
+So we have the same bug, and the stackframe also looks similar.  Floating point
+exceptions are not very interesting from a security perspective since it's only
+really going to be a denial of service attack.  It's interesting how this was
+fixed in later versions, but looking at that is left as an exercise to the
+reader.
+
+
+More versions of libav are available at: https://libav.org/releases/
+

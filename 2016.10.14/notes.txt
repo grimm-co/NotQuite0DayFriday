@@ -1,0 +1,67 @@
+Debugging version 3.8.8.3 of SQLite.  To play along at home, you'll want to
+grab the source, compile and debug it.  To do so, follow the instructions at
+https://sqlite.org/getthecode.html The quick version is this:
+
+mkdir sqlite_repo
+cd sqlite_repo
+fossil clone http://www.sqlite.org/cgi/src sqlite.fossil
+fossil open sqlite.fossil
+fossil update version-3.8.8.3
+./configure
+make
+./sqlite3 -version  # make sure you really have the right version
+
+
+
+$ gdb -q ./sqlite_repo/.libs/lt-sqlite3
+Reading symbols from ./sqlite_repo/.libs/lt-sqlite3...done.
+(gdb) r < crash.sql 
+Starting program: ./sqlite_repo/.libs/lt-sqlite3 < crash.sql
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+Program received signal SIGSEGV, Segmentation fault.
+sqlite3MatchSpanName (zSpan=0x0, zCol=zCol@entry=0x0, zTab=zTab@entry=0x6256b8 "f", zDb=zDb@entry=0x0) at sqlite3.c:80497
+80497     for(n=0; ALWAYS(zSpan[n]) && zSpan[n]!='.'; n++){}
+(gdb) x/i $rip
+=> 0x7ffff7b4c701 <sqlite3MatchSpanName+17>:    movzx  eax,BYTE PTR [rdi]
+(gdb) info registers rdi
+rdi            0x0      0
+(gdb) bt
+#0  sqlite3MatchSpanName (zSpan=0x0, zCol=zCol@entry=0x0, zTab=zTab@entry=0x6256b8 "f", zDb=zDb@entry=0x0) at sqlite3.c:80497
+#1  0x00007ffff7ba5585 in selectExpander (pWalker=<optimized out>, p=0x624ef0) at sqlite3.c:109584
+#2  0x00007ffff7b5750d in sqlite3WalkSelect (pWalker=pWalker@entry=0x7fffffffc1e0, p=p@entry=0x624ef0) at sqlite3.c:80310
+#3  0x00007ffff7b578bc in sqlite3SelectExpand (pSelect=0x624ef0, pParse=0x625900) at sqlite3.c:109710
+#4  sqlite3SelectPrep (pParse=pParse@entry=0x625900, p=p@entry=0x624ef0, pOuterNC=pOuterNC@entry=0x0) at sqlite3.c:44260
+#5  0x00007ffff7b8dd8b in sqlite3Select (pParse=pParse@entry=0x625900, p=0x624ef0, pDest=pDest@entry=0x7fffffffc510) at sqlite3.c:110039
+#6  0x00007ffff7bb0dd7 in yy_reduce (yyruleno=111, yypParser=0x625b90) at sqlite3.c:124031
+#7  sqlite3Parser (yyp=yyp@entry=0x625b90, yymajor=<optimized out>, yyminor=..., pParse=pParse@entry=0x625900) at sqlite3.c:59587
+#8  0x00007ffff7bb4d6a in sqlite3RunParser (pParse=pParse@entry=0x625900, zSql=zSql@entry=0x614730 "SELECT f.*, g.* FROM(f JOIN f)g@O;", pzErrMsg=pzErrMsg@entry=0x7fffffffc628) at sqlite3.c:125951
+#9  0x00007ffff7bb53c2 in sqlite3Prepare (db=db@entry=0x6147c0, zSql=zSql@entry=0x614730 "SELECT f.*, g.* FROM(f JOIN f)g@O;", nBytes=nBytes@entry=-1, saveSqlFlag=saveSqlFlag@entry=1, pReprepare=pReprepare@entry=0x0, ppStmt=ppStmt@entry=0x7fffffffc710, pzTail=pzTail@entry=0x7fffffffc718)
+    at sqlite3.c:105028
+#10 0x00007ffff7bb56b8 in sqlite3LockAndPrepare (db=0x6147c0, zSql=0x614730 "SELECT f.*, g.* FROM(f JOIN f)g@O;", nBytes=-1, saveSqlFlag=1, pOld=0x0, ppStmt=0x7fffffffc710, pzTail=0x7fffffffc718) at sqlite3.c:105123
+#11 0x00007ffff7bb5938 in sqlite3_prepare_v2 (db=db@entry=0x6147c0, zSql=zSql@entry=0x614730 "SELECT f.*, g.* FROM(f JOIN f)g@O;", nBytes=nBytes@entry=-1, ppStmt=ppStmt@entry=0x7fffffffc710, pzTail=pzTail@entry=0x7fffffffc718) at sqlite3.c:105199
+#12 0x0000000000406c6f in shell_exec (db=0x6147c0, zSql=zSql@entry=0x614730 "SELECT f.*, g.* FROM(f JOIN f)g@O;", pArg=pArg@entry=0x7fffffffc9b0, pzErrMsg=pzErrMsg@entry=0x7fffffffc828, xCallback=0x405e80 <shell_callback>) at ~/NotQuite0DayFriday/2016.10.14/sqlite_repo/src/shell.c:1453
+#13 0x0000000000407f8e in process_input (p=p@entry=0x7fffffffc9b0, in=0x7ffff76d2640 <_IO_2_1_stdin_>) at ~/NotQuite0DayFriday/2016.10.14/sqlite_repo/src/shell.c:3936
+#14 0x00000000004033e0 in main (argc=<optimized out>, argv=<optimized out>) at ~/NotQuite0DayFriday/2016.10.14/sqlite_repo/src/shell.c:4519
+
+So the punchline here is that there's a null pointer dereference, and since we
+have symbols, it makes our job of tracking this down really easy.  It's on line
+80497 of sqlite3.c!  So what's there?
+
+  for(n=0; ALWAYS(zSpan[n]) && zSpan[n]!='.'; n++){}
+
+The only thing being derferenced there is zSpan, so we can easily conclude that
+zSpan must be null.  That's the first argument to sqlite3MatchSpanName which is
+called from line 109584 (yes, these line numbers are correct... sqlite is a
+much larger and more complicated than people give it credit for).  That call is
+
+sqlite3MatchSpanName(pSub->pEList->a[j].zSpan, 0, zTName, 0)
+
+Tracking down the issue further is left for an exercise for the reader.  Once
+you do that, check the diff between 3.8.8.3 and 3.8.9 to see how it was
+patched.
+
+To see what tags are available in the repo: fossil tag list
+
+Have fun.
