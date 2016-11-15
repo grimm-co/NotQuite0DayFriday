@@ -1,5 +1,5 @@
 Debugging avprobe from version 11.2 of libav.  To play along at home, you'll
-want to grab trhe source, compile and debug it.  To do so:
+want to grab the source, compile and debug it.  To do so:
 
 mkdir libav
 cd libav
