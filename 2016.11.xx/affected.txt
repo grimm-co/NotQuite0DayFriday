@@ -1,0 +1,1 @@
+This bug affects Preview on OSX El Capitan (10.11.6 unpatched); it was fixed/mitigated in a patch released during October of 2016.

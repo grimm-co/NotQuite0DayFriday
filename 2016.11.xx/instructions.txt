@@ -1,0 +1,5 @@
+Back Story: When we were browsing files obtained from Google's Image Test Suite, we accidently ran into this crash.  Sometimes it appears that the Dock icon still crashes...
+
+Recreate: Install an older version of OSX 10.11, then repeatedly open and close the provided jpg.
+
+File: crashes_preview_OSX_10.11.jpg
