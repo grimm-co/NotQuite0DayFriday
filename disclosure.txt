@@ -1,0 +1,9 @@
+Vulnerabilities reported to the vendor/developer will be disclosed to the public
+after a patch is released, or 45 days after the initial report, regardless of
+the existence or availability of patches or workarounds from affected vendors.
+Extenuating circumstances, such as threats of an especially serious (or trivial)
+nature, or situations that require changes to an established standard may result
+in earlier or later disclosure.
+
+Our disclosure policy is modeled after the one adopted by CERT
+(https://www.cert.org/vulnerability-analysis/vul-disclosure.cfm).
