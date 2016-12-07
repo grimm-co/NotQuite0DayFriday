@@ -1,0 +1,272 @@
+Debugging MPlayer 1.21.  To play at home:
+
+mkdir mplayer
+cd mplayer
+wget https://mplayerhq.hu/MPlayer/releases/MPlayer-1.2.tar.xz
+tar Jxvf MPlayer-1.2.1.tar.xz
+cd MPlayer-1.2.1
+./configure
+make
+
+
+$ gdb -q ./mplayer
+Reading symbols from ./mplayer...done.
+(gdb) r ~/NotQuite0DayFriday/future_mplayer/boom.ogg
+Starting program: ./mplayer ~/NotQuite0DayFriday/future_mplayer/boom.ogg
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+MPlayer 1.2.1-4.8 (C) 2000-2016 MPlayer Team
+
+Playing ~/NotQuite0DayFriday/future_mplayer/boom.ogg.
+libavformat version 56.40.101 (internal)
+libavformat file format detected.
+[lavf] stream 0: audio (vorbis), -aid 0
+Load subtitles in ~/NotQuite0DayFriday/future_mplayer/
+==========================================================================
+Opening audio decoder: [ffmpeg] FFmpeg/libavcodec audio decoders
+libavcodec version 56.60.100 (internal)
+[Vorbis parser @ 0x5555568540a0]Invalid packet
+[vorbis @ 0x555556826820]Not a Vorbis I audio packet.
+AUDIO: 536870911 Hz, 1 ch, floatle, 40.2 kbit/0.00% (ratio: 5027->2147483644)
+Selected audio codec: [ffvorbis] afm: ffmpeg (FFmpeg Vorbis)
+==========================================================================
+[AO OSS] audio_setup: Can't open audio device /dev/dsp: No such file or directory
+[AO_ALSA] alsa-lib: confmisc.c:768:(parse_card) cannot find card '0'
+[AO_ALSA] alsa-lib: conf.c:4241:(_snd_config_evaluate) function snd_func_card_driver returned error: No such file or directory
+[AO_ALSA] alsa-lib: confmisc.c:392:(snd_func_concat) error evaluating strings
+[AO_ALSA] alsa-lib: conf.c:4241:(_snd_config_evaluate) function snd_func_concat returned error: No such file or directory
+[AO_ALSA] alsa-lib: confmisc.c:1251:(snd_func_refer) error evaluating name
+[AO_ALSA] alsa-lib: conf.c:4241:(_snd_config_evaluate) function snd_func_refer returned error: No such file or directory
+[AO_ALSA] alsa-lib: conf.c:4720:(snd_config_expand) Evaluate error: No such file or directory
+[AO_ALSA] alsa-lib: pcm.c:2217:(snd_pcm_open_noupdate) Unknown PCM default
+[AO_ALSA] Playback open error: No such file or directory
+DVB card number must be between 1 and 4
+AO: [null] 536870911Hz 1ch floatle (4 bytes per sample)
+Video: no video
+Starting playback...
+
+Program received signal SIGSEGV, Segmentation fault.
+0x00005555557e1678 in play ()
+(gdb) x/i $rip
+=> 0x5555557e1678 <play+120>:   call   0x555555705fc0 <af_lencalc>
+
+
+This one is interesting!  The faulting instruction seems to be a call to a
+fixed address.  Is that memory not mapped?  Let's look.
+
+(gdb) x/i 0x555555705fc0
+   0x555555705fc0 <af_lencalc>: mov    eax,DWORD PTR [rdi+0x18]
+
+
+No the memory is mapped and readable by the debugger.  It even disassembles
+into something reasonable, not that that actually matters since we crashed on
+the CALL instruction which means we never got there.  What the CALL instruction
+actually do though?  It's just syntatic sugar for: $rsp-=sizeof(void*);
+push $rip; jump ADDR;  When we remember this, we immediately want to look at
+the stack pointer.
+
+
+(gdb) info reg rsp
+rsp            0x7ffffea24650   0x7ffffea24650
+
+The address doesn't look any stranger than the other addresses we've seen thus
+far.  Let's see if it's mapped.
+
+
+(gdb) x/x $rsp
+0x7ffffea24650: Cannot access memory at address 0x7ffffea24650
+
+As we suspected, it's not.  So now the question becomes: what the heck happened
+to get the stack pointer so far off?  Let's see how we got here.
+
+
+(gdb) bt
+#0  0x00005555557e1678 in play ()
+#1  0x0000555555705fa1 in af_play ()
+#2  0x000055555571f377 in mp_decode_audio ()
+#3  0x0000555555699753 in main ()
+
+OK, this gives us a starting point.  With a little static analysis and some more
+breakpoints to confirm, you'll probably come to find mp_decode_audio in
+./libmpcodecs/dec_audio.c af_play in ./libaf/af.c, and play() is in
+libaf/af_lavcresample.c.  So lets take a closer look at play()
+
+static af_data_t* play(struct af_instance_s* af, af_data_t* data)
+{ 
+  af_resample_t *s = af->setup;
+  int i, j, consumed, ret;
+  int16_t *in = (int16_t*)data->audio;
+  int16_t *out;
+  int chans   = data->nch;
+  int in_len  = data->len/(2*chans);
+  int out_len = in_len * af->mul + 10;
+  int16_t tmp[AF_NCH][out_len];
+
+  if(AF_OK != RESIZE_LOCAL_BUFFER(af,data))
+
+A keen observer will notice that the tmp variable lives on the stack and is
+dynamically sized.  When execution reaches that line, it will move the stack
+pointer to allocate space on the stack for that variable.  So we can probably
+guess what happened, but lets step through an debug it.
+
+(gdb) b play
+Breakpoint 2 at 0x5555556ae5c8 (28 locations)
+(gdb) r ~/NotQuite0DayFriday/future_mplayer/boom.ogg
+he program being debugged has been started already.
+Start it from the beginning? (y or n) y
+Starting program: ./mplayer ~/NotQuite0DayFriday/future_mplayer/boom.ogg
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+MPlayer 1.2.1-4.8 (C) 2000-2016 MPlayer Team
+
+Playing ~/NotQuite0DayFriday/future_mplayer/boom.ogg.
+libavformat version 56.40.101 (internal)
+libavformat file format detected.
+[lavf] stream 0: audio (vorbis), -aid 0
+Load subtitles in ~/NotQuite0DayFriday/future_mplayer/
+==========================================================================
+Opening audio decoder: [ffmpeg] FFmpeg/libavcodec audio decoders
+libavcodec version 56.60.100 (internal)
+[Vorbis parser @ 0x5555568540a0]Invalid packet
+[vorbis @ 0x555556826820]Not a Vorbis I audio packet.
+AUDIO: 536870911 Hz, 1 ch, floatle, 40.2 kbit/0.00% (ratio: 5027->2147483644)
+Selected audio codec: [ffvorbis] afm: ffmpeg (FFmpeg Vorbis)
+==========================================================================
+[AO OSS] audio_setup: Can't open audio device /dev/dsp: No such file or directory
+[AO_ALSA] alsa-lib: confmisc.c:768:(parse_card) cannot find card '0'
+[AO_ALSA] alsa-lib: conf.c:4241:(_snd_config_evaluate) function snd_func_card_driver returned error: No such file or directory
+[AO_ALSA] alsa-lib: confmisc.c:392:(snd_func_concat) error evaluating strings
+[AO_ALSA] alsa-lib: conf.c:4241:(_snd_config_evaluate) function snd_func_concat returned error: No such file or directory
+[AO_ALSA] alsa-lib: confmisc.c:1251:(snd_func_refer) error evaluating name
+[AO_ALSA] alsa-lib: conf.c:4241:(_snd_config_evaluate) function snd_func_refer returned error: No such file or directory
+[AO_ALSA] alsa-lib: conf.c:4720:(snd_config_expand) Evaluate error: No such file or directory
+[AO_ALSA] alsa-lib: pcm.c:2217:(snd_pcm_open_noupdate) Unknown PCM default
+[AO_ALSA] Playback open error: No such file or directory
+DVB card number must be between 1 and 4
+AO: [null] 536870911Hz 1ch floatle (4 bytes per sample)
+Video: no video
+Starting playback...
+
+Breakpoint 2, 0x00005555557e1600 in play ()
+
+
+Instead of looking at the C code, we'll be going straight to the real source:
+the ASM code which is actually being executed.  We'll also confirm that the
+stack pointer is valid at this point.
+
+(gdb) x/40i $rip
+=> 0x5555557e1600 <play>:       push   rbp
+   0x5555557e1601 <play+1>:     mov    rcx,rdi
+   0x5555557e1604 <play+4>:     mov    rbp,rsp
+   0x5555557e1607 <play+7>:     push   r15
+   0x5555557e1609 <play+9>:     push   r14
+   0x5555557e160b <play+11>:    push   r13
+   0x5555557e160d <play+13>:    push   r12
+   0x5555557e160f <play+15>:    push   rbx
+   0x5555557e1610 <play+16>:    sub    rsp,0x68
+   0x5555557e1614 <play+20>:    mov    eax,DWORD PTR [rsi+0x8]
+   0x5555557e1617 <play+23>:    mov    r12d,DWORD PTR [rsi+0x10]
+   0x5555557e161b <play+27>:    vmovsd xmm0,QWORD PTR [rcx+0x48]
+   0x5555557e1620 <play+32>:    mov    QWORD PTR [rbp-0x68],rdi
+   0x5555557e1624 <play+36>:    mov    QWORD PTR [rbp-0x78],rsi
+   0x5555557e1628 <play+40>:    mov    r14,QWORD PTR [rdi+0x20]
+   0x5555557e162c <play+44>:    mov    rdi,rsi
+   0x5555557e162f <play+47>:    mov    r15,QWORD PTR [rsi]
+   0x5555557e1632 <play+50>:    cdq
+   0x5555557e1633 <play+51>:    lea    ebx,[r12+r12*1]
+   0x5555557e1637 <play+55>:    idiv   ebx
+   0x5555557e1639 <play+57>:    mov    DWORD PTR [rbp-0x48],eax
+   0x5555557e163c <play+60>:    vcvtsi2sd xmm1,xmm1,DWORD PTR [rbp-0x48]
+   0x5555557e1641 <play+65>:    vfmaddsd xmm1,xmm1,xmm0,QWORD PTR [rip+0x9907ad]        # 0x555556171df8
+   0x5555557e164b <play+75>:    vcvttsd2si r13d,xmm1
+   0x5555557e164f <play+79>:    movsxd rax,r13d
+   0x5555557e1652 <play+82>:    lea    rsi,[rax+rax*1]
+   0x5555557e1656 <play+86>:    shl    rax,0x4
+   0x5555557e165a <play+90>:    add    rax,0x10
+   0x5555557e165e <play+94>:    mov    QWORD PTR [rbp-0x70],rsi
+   0x5555557e1662 <play+98>:    sub    rsp,rax
+   0x5555557e1665 <play+101>:   mov    rax,QWORD PTR [rcx+0x28]
+   0x5555557e1669 <play+105>:   lea    r11,[rsp+0x8]
+   0x5555557e166e <play+110>:   mov    QWORD PTR [rbp-0x60],r11
+   0x5555557e1672 <play+114>:   mov    eax,DWORD PTR [rax+0x8]
+   0x5555557e1675 <play+117>:   mov    DWORD PTR [rbp-0x50],eax
+   0x5555557e1678 <play+120>:   call   0x555555705fc0 <af_lencalc>
+   0x5555557e167d <play+125>:   cmp    DWORD PTR [rbp-0x50],eax
+   0x5555557e1680 <play+128>:   mov    r11,QWORD PTR [rbp-0x60]
+   0x5555557e1684 <play+132>:   jl     0x5555557e19c4 <play+964>
+   0x5555557e168a <play+138>:   mov    rax,QWORD PTR [rbp-0x68]
+(gdb) x/x $rsp
+0x7fffffffcdd8: 0x0000555555705fa1
+
+
+OK, so everything looks reasonable at this point.  We see there's some boring
+bookkeping stuff at the beginning, saving the base pointer and some other
+registers as well, and then allocating 0x68 bytes on the stack (for local
+variables).  After that, there's a bunch of MOV instructions, which is about
+what we'd expect from a bunch of assignment statements from the C code.  We
+see that the destination addresses are things like rbp+0x68, which confirms
+this.  There is a clever lea instruction here which loads r12+r12*1, which is
+effectively r12*2.  Next, it divides by ebx, which lines up with the source:
+int in_len  = data->len/(2*chans);
+
+A little later we see shl rax,0x4, which is the same as rax *= 8.  In order to
+line this up with source code, you must know that AF_NCH is set to 8 (it's in
+af.h).  Then it adds 0x10, which is a little confusing since the source code
+says to add 10 (0xA), but the difference is probably related to alignment.
+Finally we see the sub rsp, rax which *should* be what causes rsp to point to
+unmapped memory.  Lets step through it and see if our theory pans out...
+
+(gdb) b *0x5555557e1662
+Breakpoint 3 at 0x5555557e1662
+(gdb) c
+Continuing.
+
+Breakpoint 3, 0x00005555557e1662 in play ()
+(gdb) info reg rsp rax
+rsp            0x7fffffffcd40   0x7fffffffcd40
+rax            0x15d8720        22906656
+(gdb) info reg rsp
+0x7fffffffcd40: 0x0000555556fdc520
+(gdb) si
+0x00005555557e1665 in play ()
+(gdb) info reg rsp
+rsp            0x7ffffea24620   0x7ffffea24620
+(gdb) x/x $rsp
+0x7ffffea24620: Cannot access memory at address 0x7ffffea24620
+
+
+So there we have it.  Now we understand how this happened.  The next questions
+are: how was it fixed?  Was the fix sufficient, or are there still some
+attacker-controlled values which could be fine tuned to cause this issue to
+resurface?
+
+The source for play() in version 1.3.0 is as follows:
+
+static af_data_t* play(struct af_instance_s* af, af_data_t* data)
+{
+  af_resample_t *s = af->setup;
+  int ret;
+  int8_t *in = (int8_t*)data->audio;
+  int8_t *out;
+  int chans   = data->nch;
+  int in_len  = data->len;
+  int out_len = in_len * af->mul + 10;
+
+  if(AF_OK != RESIZE_LOCAL_BUFFER(af,data))
+      return NULL;
+
+
+As you can see, the tmp variable was completely removed.  This answers all of
+our questions.  The vulnerable code was just completely removed.  You might
+also notice that there was later a loop which does a calloc().  After the loop,
+only the first return value from calloc() is checked.  This has also been
+removed.  In addition to this, there were a lot of other changes here, such as
+calling swr_convert() once instead of calling av_resample once per channel and
+several other major changes.  The new code looks much simpler than the previous
+version, and easier to maintain.  For example, swr_convert() comes from the
+ffmpeg package, so they've effectively pushed that problem to a library, which
+is often a good idea.  On the other hand, there are some pretty hilarious
+comments in that function such as "FIXME find a less hackish solution" and
+"FIXME optimize but this is as good as never called so maybe it doesn't matter".
+
+In any case, we can confirm that this bug is fixed and it won't be coming back.
