@@ -1,0 +1,1 @@
+tar Jxf crashes.tar.xz; ledger -f crashes/1.dat xml

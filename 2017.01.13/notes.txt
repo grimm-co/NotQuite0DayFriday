@@ -1,0 +1,65 @@
+Go to https://github.com/ledger/ledger/tree/master and switch the branch to
+release/3.1.1 and click the "Clone or Download" button and Download ZIP. Build
+the package per the instructions (./acprep dependencies && ./acprep && make)
+
+tar Jxvf crashes.tar.xz
+
+gdb -q ./ledger
+
+Reading symbols from ./ledger...done.
+(gdb) r -f ./crashes/0.dat xml
+Starting program: ./ledger -f ~/afl/afl_output/ledger_latest/crashes/0.dat xml
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+While parsing file "./crashes/0.dat", line 1:
+While parsing transaction:
+> 9/39 (10ell
+Error: Year is out of valid range: 1400..10000
+While parsing file "./crashes/0.dat", line 9:
+Error: Only one posting with null amount allowed per transaction
+While parsing file "./crashes/0.dat", line 13:
+Error: Unexpected whitespace at beginning of line
+*** stack smashing detected ***: ./ledger terminated
+
+Program received signal SIGABRT, Aborted.
+0x00007ffff5ac8c37 in __GI_raise (sig=sig@entry=6) at ../nptl/sysdeps/unix/sysv/linux/raise.c:56
+56      ../nptl/sysdeps/unix/sysv/linux/raise.c: No such file or directory.
+(gdb) bt
+#0  0x00007ffff5ac8c37 in __GI_raise (sig=sig@entry=6) at ../nptl/sysdeps/unix/sysv/linux/raise.c:56
+#1  0x00007ffff5acc028 in __GI_abort () at abort.c:89
+#2  0x00007ffff5b052a4 in __libc_message (do_abort=do_abort@entry=1, fmt=fmt@entry=0x7ffff5c11113 "*** %s ***: %s terminated\n") at ../sysdeps/posix/libc_fatal.c:175
+#3  0x00007ffff5b9cbbc in __GI___fortify_fail (msg=<optimized out>, msg@entry=0x7ffff5c110fb "stack smashing detected") at fortify_fail.c:38
+#4  0x00007ffff5b9cb60 in __stack_chk_fail () at stack_chk_fail.c:28
+#5  0x00007ffff763a03d in ledger::(anonymous namespace)::find_option (scope=..., 
+    name=".(Assets:Inve\004\004", ' ' <repeats 17 times>, "$.ssets:Investmiess:401iesG:Defe  Asse  A    100.0000 EIFSX @ $80.5226\354 !  Assnts$Iiesenve    Listments:ing 1alance") at ./src/option.cc:60
+#6  0x00007ffff763eb6c in ledger::process_option (whence="./crashes/0.dat", 
+    name=".(Assets:Inve\004\004", ' ' <repeats 17 times>, "$.ssets:Investmiess:401iesG:Defe  Asse  A    100.0000 EIFSX @ $80.5226\354 !  Assnts$Iiesenve    Listments:ing 1alance", scope=..., 
+    arg=arg@entry=0x79f5ea ".(Assets:Inve\004\004", ' ' <repeats 17 times>, "$.ssets:Investmiess:401iesG:Defe  Asse  A    100.0000 EIFSX @ $80.5226\354 !  Assnts$Iiesenve    Listments:ing 1alance", varname="-")
+    at ./src/option.cc:102
+#7  0x00007ffff76bfad8 in option_directive (this=<optimized out>, line=<optimized out>) at ./src/textual.cc:550
+#8  read_next_directive (error_flag=<synthetic pointer>, this=0x7fffffffada0) at ./src/textual.cc:362
+#9  ledger::(anonymous namespace)::instance_t::parse (this=this@entry=0x7fffffffada0) at ./src/textual.cc:252
+#10 0x00007ffff76c8b41 in ledger::journal_t::read_textual (this=this@entry=0x7930c0, context_stack=...) at ./src/textual.cc:1985
+#11 0x00007ffff7706dab in ledger::journal_t::read (this=0x7930c0, context=...) at ./src/journal.cc:505
+#12 0x00007ffff762ad55 in ledger::session_t::read_data (this=this@entry=0x792b40, master_account="") at ./src/session.cc:171
+#13 0x00007ffff762e5cb in ledger::session_t::read_journal_files (this=0x792b40) at ./src/session.cc:203
+#14 0x00000000004ec5cb in ledger::global_scope_t::execute_command (this=0x791c90, args=std::list = {...}, at_repl=false) at ./src/global.cc:228
+#15 0x00000000004ecc87 in ledger::global_scope_t::execute_command_wrapper (this=0x791c90, args=std::list = {...}, at_repl=false) at ./src/global.cc:273
+#16 0x00000000004cb495 in main (argc=4, argv=0x7fffffffe058, envp=0x7fffffffe080) at ./src/main.cc:121
+
+
+In this case the compiler has inserted a gaurd value (aka stack canary) which
+is set at the beginning of the function and checked at the end.  If it is not
+the correct value, the program prints an error message and then exits.  This
+comes from the -fstack-protector option, which was enabled by default on my
+system, and has been a default option for a long time.
+
+If you wanted to compile it without this extra protection, you could feed gcc
+the -fno-stack-protector option.  Of course, the only reason to do so would
+be to learn how to a stack overflow is exploited (in the absense of stack
+canaries).
+
+
+Timeline:
+11/28 - Notified author
+1/13 - Embargo ends, details released
