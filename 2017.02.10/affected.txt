@@ -1,0 +1,5 @@
+This bug affects recent (prior to this release) Adobe Acrobat Readers for Mac and Windows.  The following were confirmed:
+
+Adobe Reader IX Version 11.0.18 running on OS X 10.12.2
+Adobe Reader DC Version 2015.020.20042 running on OS X 10.11.6.
+Adobe Reader DC Version 2015.020.20042 running on Windows 8.1 Enterprise x64

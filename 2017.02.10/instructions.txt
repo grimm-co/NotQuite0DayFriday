@@ -1,0 +1,2 @@
+1. unzip Crashes.Adobe.Reader.pdf.zip
+2. Open file with Adobe Acrobat Reader
