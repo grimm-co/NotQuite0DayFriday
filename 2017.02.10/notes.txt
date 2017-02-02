@@ -1,4 +1,11 @@
-This bug was reported to Adobe on 28 December 2016 via their online submission system; it was acknowledged by the Adobe Product Security Incident Response Team on 06 January 2017.  We allowed the vendor 45ish days prior to reporting it publically; released to public by GRIMM: 10 February 2017.
+= Timeline =
+
+2016.12.28 Reported to Adobe via their online submission system;
+2017.01.06 Acknowledged by the Adobe Product Security Incident Response Team
+2017.02.10 public release
+
+
+= Notes =
 
 Example crash on OSX 10.12.2 running Adobe Acrobat Reader XI (11.0.18):
 
