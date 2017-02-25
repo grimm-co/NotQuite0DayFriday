@@ -1,0 +1,16 @@
+# Get the latest libpcap (you'll need this to build tcpdump)
+git clone https://github.com/the-tcpdump-group/libpcap.git
+cd libpcap/
+./configure && make
+cd ..
+
+# Check out the tcpdump code
+git clone https://github.com/the-tcpdump-group/tcpdump.git
+cd ../tcpdump/
+# Go to a specific commit which was vulnerable & build it
+git checkout 49b23c5a9b0198bb382dcf43c458d46fcf2fa809
+./configure && make
+
+# Now you have a vulnerable version of tcpdump, to give
+# yourself a demonstration, run:
+./tcpdump -r ../crash-2017.01.pcap

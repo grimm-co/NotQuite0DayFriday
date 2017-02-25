@@ -1,0 +1,190 @@
+If you haven't already read the instructions (instructions.txt) do that now.
+
+Great, now you have an exploitable version of tcpdump, lets dig into the
+technical details and see what's going on.  First we run it until it crashes,
+then we get all the usual information (stacktrace, faulting instructions, etc.)
+
+gdb -q ./tcpdump
+Reading symbols from ./tcpdump...done.
+(gdb) r -r ../crash-2017.01.pcap
+Starting program: ./tcpdump -r ../crash-2017.01.pcap
+reading from file ../crash-2017.01.pcap, link-type EN10MB (Ethernet)
+
+Program received signal SIGSEGV, Segmentation fault.
+0x0000000000477b44 in relts_print (ndo=0x7fffffffc6a0, secs=-2147483648) at ./util-print.c:347
+347     {
+(gdb) bt
+#0  0x0000000000477b44 in relts_print (ndo=0x7fffffffc6a0, secs=-2147483648) at ./util-print.c:347
+#1  0x0000000000431c75 in igmp_print (ndo=ndo@entry=0x7fffffffc6a0, bp=0x7ffff7f87032 "\023\a\374\177", len=64) at ./print-igmp.c:314
+#2  0x00000000004333bf in ip_print_demux (ndo=ndo@entry=0x7fffffffc6a0, ipds=ipds@entry=0x7fffffffc400) at ./print-ip.c:427
+#3  0x00000000004327e9 in ip_print (ndo=0x7fffffffc6a0, bp=bp@entry=0x7ffff7f8701e "E", length=<optimized out>) at ./print-ip.c:653
+#4  0x00000000004268ee in ethertype_print (ndo=ndo@entry=0x7fffffffc6a0, ether_type=<optimized out>, p=p@entry=0x7ffff7f8701e "E", length=length@entry=84, caplen=caplen@entry=84) at ./print-ether.c:325
+#5  0x0000000000426e7f in ether_print (ndo=0x7fffffffc6a0, p=0x7ffff7f87010 "", length=98, caplen=<optimized out>, print_encap_header=0x0, encap_header_arg=0x0) at ./print-ether.c:229
+#6  0x000000000040a80f in pretty_print_packet (ndo=0x7fffffffc6a0, h=0x7fffffffc570, sp=0x7ffff7f87010 "", packets_captured=<optimized out>) at ./print.c:339
+#7  0x0000000000406d9f in print_packet (user=<optimized out>, h=<optimized out>, sp=<optimized out>) at ./tcpdump.c:2501
+#8  0x000000000048ccf4 in pcap_offline_read (p=p@entry=0x873320, cnt=cnt@entry=-1, callback=callback@entry=0x406d80 <print_packet>, user=user@entry=0x7fffffffc6a0 "") at ./savefile.c:527
+#9  0x000000000047c88f in pcap_loop (p=0x873320, cnt=cnt@entry=-1, callback=callback@entry=0x406d80 <print_packet>, user=user@entry=0x7fffffffc6a0 "") at ./pcap.c:1623
+#10 0x00000000004059e2 in main (argc=<optimized out>, argv=<optimized out>) at ./tcpdump.c:2004
+(gdb) set disassembly-flavor intel
+(gdb) x/i $rip
+=> 0x477b44 <relts_print+36>:   mov    esi,DWORD PTR [rbx+0x4e0990]
+(gdb) disassemble 
+Dump of assembler code for function relts_print:
+   0x0000000000477b20 <+0>:     test   esi,esi
+   0x0000000000477b22 <+2>:     push   r12
+   0x0000000000477b24 <+4>:     mov    r12,rdi
+   0x0000000000477b27 <+7>:     push   rbp
+   0x0000000000477b28 <+8>:     push   rbx
+   0x0000000000477b29 <+9>:     je     0x477b90 <relts_print+112>
+   0x0000000000477b2b <+11>:    mov    ebp,esi
+   0x0000000000477b2d <+13>:    js     0x477ba8 <relts_print+136>
+   0x0000000000477b2f <+15>:    xor    ebx,ebx
+   0x0000000000477b31 <+17>:    mov    esi,0x1e13380
+   0x0000000000477b36 <+22>:    jmp    0x477b4a <relts_print+42>
+   0x0000000000477b38 <+24>:    nop    DWORD PTR [rax+rax*1+0x0]
+   0x0000000000477b40 <+32>:    add    rbx,0x4
+=> 0x0000000000477b44 <+36>:    mov    esi,DWORD PTR [rbx+0x4e0990]
+   0x0000000000477b4a <+42>:    cmp    esi,ebp
+   0x0000000000477b4c <+44>:    jg     0x477b40 <relts_print+32>
+   0x0000000000477b4e <+46>:    mov    eax,ebp
+   0x0000000000477b50 <+48>:    mov    rcx,QWORD PTR [rbx+rbx*1+0x71ba60]
+   0x0000000000477b58 <+56>:    mov    rdi,r12
+   0x0000000000477b5b <+59>:    cdq    
+   0x0000000000477b5c <+60>:    idiv   esi
+   0x0000000000477b5e <+62>:    mov    esi,0x4e08b2
+   0x0000000000477b63 <+67>:    mov    edx,eax
+   0x0000000000477b65 <+69>:    xor    eax,eax
+   0x0000000000477b67 <+71>:    call   QWORD PTR [r12+0x98]
+(gdb) x/x $rbx+0x4e0990
+0x516000:       Cannot access memory at address 0x516000
+
+Debugging with symbols is great.  It tells us that the exception handled on
+line 347 of ./util-print.c, and the disassembly of that function matches up
+with the source code exactly as you would imagine.  For reference, here is
+the C code:
+
+void
+relts_print(netdissect_options *ndo,
+            int secs)
+{
+        static const char *lengths[] = {"y", "w", "d", "h", "m", "s"};
+        static const int seconds[] = {31536000, 604800, 86400, 3600, 60, 1};
+        const char **l = lengths;
+        const int *s = seconds;
+
+        if (secs == 0) {
+                ND_PRINT((ndo, "0s"));
+                return;
+        }
+        if (secs < 0) {
+                ND_PRINT((ndo, "-"));
+                secs = -secs;
+        }
+        while (secs > 0) {
+                if (secs >= *s) {
+                        ND_PRINT((ndo, "%d%s", secs / *s, *l));
+                        secs -= (secs / *s) * *s;
+                }
+                s++;
+                l++;
+        }
+}
+
+The "je" at 0x0000000000477b29 is the first if statement, and the "js" at
+0x0000000000477b2d is the second if statement.  If we upt a breakpoint on
+relts_print and restart, we can look at the value for secs at the beginning
+of the function and just watch which lines of code are being executed.
+
+(gdb) p secs
+$1 = -214748364
+
+So the if (secs == 0) block isn't executed, but the if (secs < 0) is.  This
+negates the secs value.  If we're tracing the secs variable, we can see it is
+esi in the first if statement.  At +11 secs is copied from esi to ebp.  This
+second if statement fires and takes us to +136.  This overwrites esi, zeros
+out eax, and negates ebp.  Interestingly, ebp is 0x80000000 before the
+"neg ebp" instruction at +143, and the value doesn't change!  Yeah, you heard
+that right.  It was the smallest negative number, and the - operator didn't
+make it a positive number.  Think about that for a minute.  Do you understand
+why?
+
+Ding! Time's up.  The asnwer is because that's impossible.  The range for a signed
+32-bit number is from -2147483648 to 2147483647.  Our value was -2147483648.
+So negating this value has no effect.  This is documented in the Intel 64 and
+IA-32 architecture software developer manual on page 4.
+"Replaces the value of operand (the destination operand) with its two's complement. 
+(This operation is equivalent to subtracting the operand from 0.)"
+Source: http://download.intel.com/support/processors/pentium4/sb/25366721.pdf
+
+
+After the call to NDPRINT at +145, we return to +15 where ebx is zeroed and
+esi is set to 0x1e13380.  Next thing you know, we are at +42 comparing esi,
+which was just set to 0x1e13380, with ebp.  Wait, what line of C code is this?
+It's "if (secs >= *s)", but wait what happened to the "while (secs > 0)"
+condition on the while loop?  It appears the compile has optimized it away!
+
+Is this reasonable?  Well, we know that secs is not zero, or we would have
+returned on line 355.  If secs was less than zero, it would have been
+inverted to be greater than zero.  So now we can conclude that secs is above
+zero.  So the condition on the while loop will be true the first time, every
+time secs is non-zero.  However, that loop also controls the exit condition.
+This sure looks like it's a compiler optimization gone wrong...
+
+Lets see what happens when we hack our Makefile to change CFLAGS to be -O0
+instead of -O2 and recompile...
+
+./tcpdump/tcpdump -r ../crash-2017.01.pcap 
+reading from file crash-2017.01.pcap, link-type EN10MB (Ethernet)
+16:34:07.666661 IP localhost > localhost: igmp dvmrp Prune src 0.0.1.8 grp 0.217.27.0 timer -
+16:34:07.666679 IP localhost > localhost: ICMP echo reply, id 7991, seq 1, length 64
+16:34:08.666090 IP localhost > localhost: ICMP echo request, id 7991, seq 2, length 64
+16:34:08.666100 IP localhost > localhost: ICMP echo reply, id 7991, seq 2, length 64
+16:34:09.666430 IP localhost > localhost: ICMP echo request, id 7991, seq 3, length 64
+16:34:09.666440 IP localhost > localhost: ICMP echo reply, id 7991, seq 3, length 64
+16:34:10.666359 IP localhost > localhost: ICMP echo request, id 7991, seq 4, length 64
+16:34:10.666369 IP localhost > localhost: ICMP echo reply, id 7991, seq 4, length 64
+
+
+Woah!  It worked just fine.  But, if this is the case, why does the latest
+version of tcpdump not have the same issue?  Did the compiler flags change?
+
+When we look at the latest version, we find that the relts_print function no
+longer exists.  This is because it has been replaced by unsigned_relts_print
+and signed_relts_print.  Furthermore, there is a check on line 428 (in the
+signed_relts_print fucntion) which explicitly checks to see if secs is equal
+to INT32_MIN.
+
+
+The real question is: why did this get fixed?  Was it something which was being
+exploited in the wild?  Was it a bug caught by Google's new open source fuzzing
+they are doing as integration testing?  Apparently not.  It was a change which
+was implemented to, get this, fix compiler warnings!  Here's the relevant commit
+message.
+
+
+
+
+commit 8ca206d7049537ec2e1c9d5830da1161e68de1ec
+Author: Guy Harris <guy@alum.mit.edu>
+Date:   Tue Jan 17 15:25:35 2017 -0800
+
+    Use INT32_MIN to check for the smallest possible 32-bit signed value.
+
+    -2147483648 provokes warnings, for various reasons involving the
+    definition of a constant in C, the rules of picking the type of a
+    constant, and the rules for determining the type of an expression
+    involving an integral value and the - operator.  (Note that
+    -2147483648isn't a decimal-constant in C90 or C99, as a decimal-constant
+    can't contain a -.  Therefore, it's a constant expression, consisting of
+    the - operator applied to the constant 2147483648.)
+
+    So we use INT32_MIN, which should at least make an effort to avoid those
+    warnings.
+
+
+Wow.  What a journey.  A compiler optimization which caused a bug with an
+incredibly obscure edge case where the negation operation doesn't negate a
+number to actually matter, and the end result is a loop which doesn't
+properly terminate causing an out of bounds read (technically many out of
+bounds reads).
+
