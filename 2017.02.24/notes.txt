@@ -108,10 +108,10 @@ that right.  It was the smallest negative number, and the - operator didn't
 make it a positive number.  Think about that for a minute.  Do you understand
 why?
 
-Ding! Time's up.  The asnwer is because that's impossible.  The range for a signed
-32-bit number is from -2147483648 to 2147483647.  Our value was -2147483648.
-So negating this value has no effect.  This is documented in the Intel 64 and
-IA-32 architecture software developer manual on page 4.
+Ding!  Time's up.  The answer is because that's impossible.  The range for a
+signed 32-bit number is from -2147483648 to 2147483647.  Our value was
+-2147483648.  So negating this value has no effect.  This is documented in the
+Intel 64 and IA-32 architecture software developer manual on page 4.
 "Replaces the value of operand (the destination operand) with its two's complement. 
 (This operation is equivalent to subtracting the operand from 0.)"
 Source: http://download.intel.com/support/processors/pentium4/sb/25366721.pdf
