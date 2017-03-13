@@ -1,7 +1,7 @@
 SQLite Use of Uninitialized Pointer Bug
 
 Overview:
-The following is a brief write-up of a bug that was found while performing some research on SQLite. As per our coordinated disclosure policy (see https://github.com/grimm-co/NotQuite0DayFriday/blob/master/disclosure.txt), we are sending the SQLite development team this cursory write up.
+The following is a brief write-up of a bug that was found while performing some research on SQLite.
 
 Affected Versions:
 Segmentation Fault on 3.10.0 - 3.16.2
