@@ -210,3 +210,8 @@ ds             0x0	0
 es             0x0	0
 fs             0x0	0
 gs             0x0	0
+
+Timeline:
+01/22 - Notified SQLite3 development team
+01/23 - Fix checked-in (http://www.sqlite.org/src/info/06b8001ade62bc59)
+02/13 - New SQLite3 version released (with patch)
