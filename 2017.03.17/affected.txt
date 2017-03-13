@@ -3,3 +3,9 @@ Exercising the bug results in a segmentation fault.
 
 This bug was reported to the SQLite3 development team, who implemented
 a fix that was included in the 3.17.0 release.
+
+The bug lasted just over 13 months (2016.01.06 - 2017.02.13) before it was
+patched.
+
+https://sqlite.org/releaselog/3_10_0.html
+https://sqlite.org/releaselog/3_17_0.html
