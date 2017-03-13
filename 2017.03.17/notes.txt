@@ -1,0 +1,212 @@
+SQLite Use of Uninitialized Pointer Bug
+
+Overview:
+The following is a brief write-up of a bug that was found while performing some research on SQLite. As per our coordinated disclosure policy (see https://github.com/grimm-co/NotQuite0DayFriday/blob/master/disclosure.txt), we are sending the SQLite development team this cursory write up.
+
+Affected Versions:
+Segmentation Fault on 3.10.0 - 3.16.2
+
+Discovery Environment:
+Ubuntu 16.04.1 64-bit
+SQLite version 3.11.0
+
+Exercising:
+Install SQLite3 on the target host
+Run <cat crash-minimal.sql | sqlite3> (A segmentation fault should occur after running this command)
+
+Triage:
+The following triage was performed using the amalgamated SQLite source files. Triggering the bug with GDB attached to the SQLite process provides the following data:
+
+GNU gdb (Ubuntu 7.11.1-0ubuntu1~16.04) 7.11.1
+Copyright (C) 2016 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
+and "show warranty" for details.
+This GDB was configured as "x86_64-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+<http://www.gnu.org/software/gdb/bugs/>.
+Find the GDB manual and other documentation resources online at:
+<http://www.gnu.org/software/gdb/documentation/>.
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from ./a.out...done.
+(gdb) run < crash-minimal.sql 
+Starting program: /home/test/Desktop/sqlite-amalgamation-3160200/a.out < crash-minimal.sql
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+Error: :.so: cannot open shared object file: No such file or directory
+
+Program received signal SIGSEGV, Segmentation fault.
+0x00007ffff763bcc0 in _IO_vfprintf_internal (
+    s=0x7ffff79b1620 <_IO_2_1_stdout_>, format=<optimized out>, 
+    ap=ap@entry=0x7fffffffaf98) at vfprintf.c:1632
+1632	vfprintf.c: No such file or directory.
+
+Compiling SQLite ourselves provided us with the symbols necessary to obtain the following stack trace:
+
+#0  0x00007ffff763bcc0 in _IO_vfprintf_internal (
+    s=0x7ffff79b1620 <_IO_2_1_stdout_>, format=<optimized out>, 
+    ap=ap@entry=0x7fffffffaf98) at vfprintf.c:1632
+#1  0x00007ffff76427f7 in __fprintf (stream=<optimized out>, 
+    format=<optimized out>) at fprintf.c:32
+#2  0x000000000040f308 in do_meta_command (zLine=0x6e4a70 ".vf", 
+    p=0x7fffffffc9a0) at shell.c:5428
+#3  0x000000000040fd77 in process_input (p=0x7fffffffc9a0, 
+    in=0x7ffff79b08e0 <_IO_2_1_stdin_>) at shell.c:5643
+#4  0x000000000041183d in main (argc=1, argv=0x7fffffffdec8) at shell.c:6287
+
+The stack trace pointed us to a fprintf() call in the do_meta_command() function in the shell.c file. Based on the #define statements at the top of the shell.c file, we focused our attention on calls to raw_printf() and utf8_printf().
+
+#elif !defined(utf8_printf)
+# define utf8_printf fprintf
+#endif
+
+/*
+** Render output like fprintf().  This should not be used on anything that
+** includes string formatting (e.g. "%s").
+*/
+#if !defined(raw_printf)
+# define raw_printf fprintf
+#endif
+
+The information from both the #define and the stack trace indicated that the crash was occurring as a result of one particular utf8_printf() call.
+
+const char *zDbName = nArg==2 ? azArg[1] : "main";
+sqlite3_vfs *pVfs;
+
+if( p->db ){
+      sqlite3_file_control(p->db, zDbName, SQLITE_FCNTL_VFS_POINTER, &pVfs);
+      if( pVfs ){
+        utf8_printf(p->out, "vfs.zName      = \"%s\"\n", pVfs->zName);
+        raw_printf(p->out, "vfs.iVersion   = %x\n", pVfs->iVersion);
+        raw_printf(p->out, "vfs.szOsFile   = %x\n", pVfs->szOsFile);
+        raw_printf(p->out, "vfs.mxPathname = %x\n", pVfs->mxPathname);
+      }
+
+A closer examination of the faulting instruction reveals that the crash occurred while executing an instruction that is typically used to measure string lengths.
+
+  >│0x7ffff763bcc0 <_IO_vfprintf_internal+6992>     repnz scas %es:(%rdi),%al
+
+With this clue, we decided to investigate the “string” pointer (pVfs->zName) that was being passed to fprintf().
+
+Breakpoint 1, 0x000000000040f31b in do_meta_command (zLine=0x6e4a70 ".vf", p=0x7fffffffc9a0)
+    at shell.c:5430
+5430	        utf8_printf(p->out, "vfs.zName      = \"%s\"\n", pVfs->zName);
+
+(gdb) i r
+rax            0x0	0
+rbx            0x0	0
+rcx            0x7ffffff4	2147483636
+rdx            0x207463656a626f20	2338603393739812640	<— String Pointer
+rsi            0x4bb7e0	4962272					<— Stream Pointer
+rdi            0x7ffff79b1620	140737347524128			<— Format String
+rbp            0x7fffffffc8a0	0x7fffffffc8a0
+rsp            0x7fffffffb070	0x7fffffffb070
+r8             0x0	0
+r9             0xc	12
+r10            0x5	5
+r11            0x246	582
+r12            0x401f50	4202320
+r13            0x7fffffffdec0	140737488346816
+r14            0x0	0
+r15            0x0	0
+rip            0x40f31b	0x40f31b <do_meta_command+22989>
+eflags         0x202	[ IF ]
+cs             0x33	51
+ss             0x2b	43
+ds             0x0	0
+es             0x0	0
+fs             0x0	0
+gs             0x0	0
+
+In the case of fprintf(), the stream pointer is stored in RSI, the pointer to the format string is stored in RDI, and the pointer to the string that should be included in the format string (%s) is stored in RDI. As we suspected, the string pointer (pVfs->zName) looked fairly suspicious. Since the value stored in pVfs->zName did not appear to be a valid pointer, we shifted our attention to where pVfs is set. 
+
+When declared, the pointer to pVfs is left uninitialized. Since the pointer is declared as a local variable, its value at the time of its declaration is whatever stale data exists on the top of the current stack. The sqlite3_file_control() function is responsible for initializing the pVfs pointer. However, sqlite3_file_control()  can terminate prior to initializing the pVfs pointer.
+
+/*
+** Invoke the xFileControl method on a particular database.
+*/
+SQLITE_API int sqlite3_file_control(sqlite3 *db, const char *zDbName, int op, void *pArg){							<— pVfs
+  int rc = SQLITE_ERROR;
+  Btree *pBtree;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ) {
+     return SQLITE_MISUSE_BKPT;
+  }
+#endif
+  sqlite3_mutex_enter(db->mutex);
+  pBtree = sqlite3DbNameToBtree(db, zDbName);	<— Fail (returns NULL)
+  if( pBtree ){							<— Skip this chunk of code
+    Pager *pPager;
+    sqlite3_file *fd;
+    sqlite3BtreeEnter(pBtree);
+    pPager = sqlite3BtreePager(pBtree);
+    assert( pPager!=0 );
+    fd = sqlite3PagerFile(pPager);
+    assert( fd!=0 );
+    if( op==SQLITE_FCNTL_FILE_POINTER ){
+      *(sqlite3_file**)pArg = fd;
+      rc = SQLITE_OK;
+    }else if( op==SQLITE_FCNTL_VFS_POINTER ){
+      *(sqlite3_vfs**)pArg = sqlite3PagerVfs(pPager);	<— This code is skipped
+      rc = SQLITE_OK;
+    }else if( op==SQLITE_FCNTL_JOURNAL_POINTER ){
+      *(sqlite3_file**)pArg = sqlite3PagerJrnlFile(pPager);
+      rc = SQLITE_OK;
+    }else if( fd->pMethods ){
+      rc = sqlite3OsFileControl(fd, op, pArg);
+    }else{
+      rc = SQLITE_NOTFOUND;
+    }
+    sqlite3BtreeLeave(pBtree);
+  }
+  sqlite3_mutex_leave(db->mutex);
+  return rc;
+}
+
+If sqlite3DbNameToBtree() returns NULL (which it does in our case), the code that initializes “pArg” (pVfs) is skipped. Although sqlite3_file_control() returns a failure status code (SQLITE_ERROR) if pVfs is not initialized, said return value is never checked by the caller (do_meta_command()). Instead, the check that is performed is whether pVfs is NULL.
+
+const char *zDbName = nArg==2 ? azArg[1] : "main";
+sqlite3_vfs *pVfs;
+
+if( p->db ){
+      sqlite3_file_control(p->db, zDbName, SQLITE_FCNTL_VFS_POINTER, &pVfs);
+      if( pVfs ){	<— Checking pVfs, return code from sqlite3_file_control() is ignored
+        utf8_printf(p->out, "vfs.zName      = \"%s\"\n", pVfs->zName);
+        raw_printf(p->out, "vfs.iVersion   = %x\n", pVfs->iVersion);
+        raw_printf(p->out, "vfs.szOsFile   = %x\n", pVfs->szOsFile);
+        raw_printf(p->out, "vfs.mxPathname = %x\n", pVfs->mxPathname);
+      }
+
+In all of our test cases, the stale stack value stored in pVfs has been non-NULL, which is sufficient to pass the only sanity check. Code execution continues after the NULL pointer check until the zName element of the invalid pVfs structure is used as a pointer to a string, at which point the crash occurs. As you can see, the value stored in RDI when the faulting instruction is executed is the same garbage value that was stored in RDX (the suspicious string pointer) prior to the call to utf8_printf() in do_meta_command().
+
+0x7ffff763bcc0 <_IO_vfprintf_internal+6992>     repnz scas %es:(%rdi),%al <— Fault
+
+(gdb) i r
+rax            0x0	0
+rbx            0x7ffff79b1620	140737347524128
+rcx            0xffffffffffffffff	-1
+rdx            0x18	24
+rsi            0x7fffffffaf48	140737488334664
+rdi            0x207463656a626f20	2338603393739812640	<— Garbage Data
+rbp            0x7fffffffaf80	0x7fffffffaf80
+rsp            0x7fffffffaa10	0x7fffffffaa10
+r8             0x0	0
+r9             0x12	18
+r10            0x73	115
+r11            0x207463656a626f20	2338603393739812640
+r12            0x4bb7e0	4962272
+r13            0x7fffffffaf98	140737488334744
+r14            0x1	1
+r15            0x4bb7f2	4962290
+rip            0x7ffff763bcc0	0x7ffff763bcc0 <_IO_vfprintf_internal+6992>
+eflags         0x10286	[ PF SF IF RF ]
+cs             0x33	51
+ss             0x2b	43
+ds             0x0	0
+es             0x0	0
+fs             0x0	0
+gs             0x0	0

@@ -1,0 +1,5 @@
+This bug affects SQLite versions 3.10.0 through 3.16.2 (inclusive).
+Exercising the bug results in a segmentation fault.
+
+This bug was reported to the SQLite3 development team, who implemented
+a fix that was included in the 3.17.0 release.
