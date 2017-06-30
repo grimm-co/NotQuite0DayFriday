@@ -1,0 +1,342 @@
+Overview:
+The following is a brief write-up of vulnerabilities that were found while
+performing some research on the NITEC17 mobile application.
+
+
+Background about the app:
+The NITEC17 application was designed for NATO Industry Conference and TechNet
+International. This application was made by Cvent and is a re-branded version of
+a product they call CrowdCompass.  Cvent has released this same app under
+hundreds of other names to match the conferences where it is used.  A partial
+list can be found in apps.txt.
+
+This was the first time we encountered a custom application which is used
+for a single conference.  We were fascinated by the idea that a completely
+custom application would be created for a one-time event.  What would a
+conference app even do?  What information would it provide or store?  What
+can you actually do with it?  How does it work?  It was only after digging into
+it that we discovered that it wasn't a custom app, it was a generic app which
+gets re-skinned for each conference.  That made a lot more sense, financially.
+It also meant that the code quality was expected to be better since any bugs
+would not just affect this conference, but hundreds of others as well.
+
+
+Process of finding these bugs:
+We followed the standard process for reversing Android applications:
+1.) Install the app on a rooted phone
+2.) Extract the .apk file as well as /data/data/$appID files
+3.) Unzip the .apk
+4.) Use dex2jar to convert the .dex files to .jar files
+5.) Use jd or jd-gui to reverse the .jar files into .class files & source code
+6.) Dig around in the data files and see what's there
+
+There were a number of things that caught our eye.  First, there were a large
+number of places where there appear to be SQL injection vulnerabilities.  We
+will go through all of the things that we found which are concerning.  Due to
+the limited amount of time spent on this app, this should not be considered a
+complete list of all potential issues.
+
+
+First, in the net.sqlcipher.DatabaseUtils.class file, there's a class called
+DatabaseHelper that contains a method called concatinateWhere(String, String).
+This appears to be textbook SQLi.  We weren't able to find any place where this
+method is being used, in which case there's no real vulnerability, however the
+fact that this vulnerability is there in the first place is concerning.  To be
+fair, this is in sqlcipher's code.  This means two things:
+1.) All the things which use sqlcipher (and *many* mobile apps do) have the
+    potential of calling this method and thus possibly introducing a
+    vulnerability to their app, and
+2.) Cvent didn't write this code, however they did chose to include it in their
+    application.  This touches on a number of issues which we'll come back to
+    later... such as why this library is being used in the first place
+
+It's also important to mention that it would be possible to used this function
+and still not be vulnerable.  So just because an app is found to call it, does
+not automatically mean it's vulnerable.  If all the arguments are hard-coded,
+for example, there wouldn't be a vulnerability.  However, it should not be up
+to the caller to ensure things are processed safely.  The library should handle
+all inputs safely.
+
+While this is the only clear issue with this file, there are others which are
+suspicious and should be investigated further before concluding they are safe.
+The appendEscapedSQLString(String, String) method escapes single quotes, which
+mixes code (the SQL statement) with data (the possibly-user-specified
+parameter).  Does it handle all cases properly?  What if the last character in
+paramString is a backslash?  What about double quotes?  What about unicode
+representations of things like a single quote?  It may be possible to handle
+all these cases safely, but it'd be much better to provide the SQL engine with
+the data and query as separate pieces and let it deal with these problems.
+
+The InsertHelper::buildSQL also falls into this category.  There are no known
+issues in this specific code, but it is taking a treacherous path instead of
+following best practices.
+
+Sadly, this is not limited to the net.sqlcipher.* classes.  We see this same
+concatenateWhere method in android.support.v4.database.DatabaseUtilsCompat
+class.  Next there is com.crowdcompass.bearing.client.eventguide.messaging
+which contains the MessageHistory::deleteKey(String).  This is another case of
+textbook SQLi, and this time, it is in code that Cvent wrote.  Is it
+exploitable?  It's difficult to say.  This function is private, and only called
+from cleanUp(String, String).  If the second argument to cleanUp can be attacker
+controlled, then the answer is yes.  This is where the reversing gets more
+complicated, as we can see it's called from the public read(String) method,
+however we have to look at that method in bytecode, so it would require slightly
+more effort.  This is more effort than we were willing to put in, but it might
+be worth the effort for someone who were willing to use these weaknesses to for
+financial gain.  There's another example in SecureKey::generateKey(String) in
+com.crowdcompass.bearing.client.util where the parameter is being injected
+directly into the SQL query.  This is called from getCipher(int, String) and
+getCipher seems to be used in many places.  One example would be in the decrypt
+method of the Player class in com.crowdcompass.bearing.game.model.  The usage
+within that file (getUUID()) has a hard-coded parameter, which means that one
+is safe.  We did not go through all usages to verify they are all safe, nor
+would we recommend doing so in order to fix the issue.  In order to fix all of
+these, it's just a matter of using parameterized queries.  SQLite does support
+this, as documented here: https://sqlite.org/lang_expr.html#varparam
+
+To summarize, there are a lot of places this app has potential SQL injection
+issues, some of them are in Cvent's code, and some of them are in libraries
+they have chosen.
+
+
+
+Enough about SQL injection.  Lets talk about what we found when we were going
+through the data directory.  Here are the top level directories and a short
+note on what they each contain:
+app_databases - tumbleweed.sqlite3 (encrypted sqlite database)
+app_sync_logs - empty
+app_textures - empty
+app_webview - a couple sqlite databases
+cache - caches of things it pulls down from the web
+code_cache - empty
+databases - several more databases
+files - nothing interesting
+no_backup - empty file
+shared_prefs - phone info, pushToken and anonymous_access_token
+
+The first thing that struck us as strange is that some of the databases are
+encrypted, and others are not, and they didn't follow the pattern that one
+would necessarily expect.  For example, the app_webview/Cookies database
+isn't encrypted.  The sqlcipher command line utility can be installed and
+the database opened like so:
+
+    $ sqlcipher app_webview/Cookies 
+    SQLCipher version 3.8.6 2014-08-15 11:46:33
+    Enter ".help" for instructions
+    Enter SQL statements terminated with a ";"
+    sqlite> .schema
+    CREATE TABLE meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
+    CREATE TABLE cookies (creation_utc INTEGER NOT NULL UNIQUE PRIMARY KEY,host_key TEXT NOT NULL,name TEXT NOT NULL,value TEXT NOT NULL,path TEXT NOT NULL,expires_utc INTEGER NOT NULL,secure INTEGER NOT NULL,httponly INTEGER NOT NULL,last_access_utc INTEGER NOT NULL, has_expires INTEGER NOT NULL DEFAULT 1, persistent INTEGER NOT NULL DEFAULT 1,priority INTEGER NOT NULL DEFAULT 1,encrypted_value BLOB DEFAULT '',firstpartyonly INTEGER NOT NULL DEFAULT 0);
+    CREATE INDEX domain ON cookies(host_key);
+    CREATE INDEX is_transient ON cookies(persistent) where persistent != 1;
+    sqlite> select * from cookies;
+    13137095324279892|login.crowdcompass.com|event_oid|<REDACTED>|/|13137181724000000|0|0|13137095324279892|1|1|1||0
+    13137095324280069|login.crowdcompass.com|redirect_uri|<REDACTED>|/|13137181724000000|0|0|13137095324280069|1|1|1||0
+    13137095352243621|.crowdcompass.com|mp_0338285d208b7884b91c8120f756dd5a_mixpanel|<REDACTED>|/|13168631352000000|0|0|13137095352243621|1|1|1||0
+    13137095352244930|.crowdcompass.com|mp_mixpanel__c|<REDACTED>|/|13137181752000000|0|0|13137095352244930|1|1|1||0
+
+Another database which one might expect to be encrypted would be the one with
+tables to hold credit card information, such as the "app_webview/Web Data"
+database.  In this particular version of the application, there were not any
+records, nor could we find any place in the user interface to enter a credit
+card number, however it's reasonable to expect that some versions of this app
+will use this feature.  Here's what the database looks like:
+
+    $ sqlcipher app_webview/Web\ Data
+    SQLCipher version 3.8.6 2014-08-15 11:46:33
+    Enter ".help" for instructions
+    Enter SQL statements terminated with a ";"
+    sqlite> .schema
+    CREATE TABLE meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
+    CREATE TABLE autofill (name VARCHAR, value VARCHAR, value_lower VARCHAR, date_created INTEGER DEFAULT 0, date_last_used INTEGER DEFAULT 0, count INTEGER DEFAULT 1, PRIMARY KEY (name, value));
+    CREATE INDEX autofill_name ON autofill (name);
+    CREATE INDEX autofill_name_value_lower ON autofill (name, value_lower);
+    CREATE TABLE credit_cards ( guid VARCHAR PRIMARY KEY, name_on_card VARCHAR, expiration_month INTEGER, expiration_year INTEGER, card_number_encrypted BLOB, date_modified INTEGER NOT NULL DEFAULT 0, origin VARCHAR DEFAULT '', use_count INTEGER NOT NULL DEFAULT 0, use_date INTEGER NOT NULL DEFAULT 0, billing_address_id VARCHAR);
+    CREATE TABLE autofill_profiles ( guid VARCHAR PRIMARY KEY, company_name VARCHAR, street_address VARCHAR, dependent_locality VARCHAR, city VARCHAR, state VARCHAR, zipcode VARCHAR, sorting_code VARCHAR, country_code VARCHAR, date_modified INTEGER NOT NULL DEFAULT 0, origin VARCHAR DEFAULT '', language_code VARCHAR, use_count INTEGER NOT NULL DEFAULT 0, use_date INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE autofill_profile_names ( guid VARCHAR, first_name VARCHAR, middle_name VARCHAR, last_name VARCHAR, full_name VARCHAR);
+    CREATE TABLE autofill_profile_emails ( guid VARCHAR, email VARCHAR);
+    CREATE TABLE autofill_profile_phones ( guid VARCHAR, number VARCHAR);
+    CREATE TABLE autofill_profiles_trash ( guid VARCHAR);
+    CREATE TABLE masked_credit_cards (id VARCHAR,status VARCHAR,name_on_card VARCHAR,type VARCHAR,last_four VARCHAR,exp_month INTEGER DEFAULT 0,exp_year INTEGER DEFAULT 0);
+    CREATE TABLE unmasked_credit_cards (id VARCHAR,card_number_encrypted VARCHAR, use_count INTEGER NOT NULL DEFAULT 0, use_date INTEGER NOT NULL DEFAULT 0, unmask_date INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE server_card_metadata (id VARCHAR NOT NULL,use_count INTEGER NOT NULL DEFAULT 0, use_date INTEGER NOT NULL DEFAULT 0, billing_address_id VARCHAR);
+    CREATE TABLE server_addresses (id VARCHAR,company_name VARCHAR,street_address VARCHAR,address_1 VARCHAR,address_2 VARCHAR,address_3 VARCHAR,address_4 VARCHAR,postal_code VARCHAR,sorting_code VARCHAR,country_code VARCHAR,language_code VARCHAR, recipient_name VARCHAR, phone_number VARCHAR);
+    CREATE TABLE server_address_metadata (id VARCHAR NOT NULL,use_count INTEGER NOT NULL DEFAULT 0, use_date INTEGER NOT NULL DEFAULT 0, has_converted BOOL NOT NULL DEFAULT FALSE);
+    CREATE TABLE autofill_sync_metadata (storage_key VARCHAR PRIMARY KEY NOT NULL,value BLOB);
+    CREATE TABLE autofill_model_type_state (id INTEGER PRIMARY KEY, value BLOB);
+
+
+It seems strange to encrypt some things but then leave things like cookies and
+credit card info unencrypted.  The unmasked_credit_cards table does name the
+field card_number_encrypted, but this is not reassuring as you'll see in the
+next section where the encryption was done with a hard-coded password.
+
+The app_databases/tumbleweed.sqlite3 was encrypted, but it turned out to have a
+hard-coded password.  This was found in DatabaseHelper::getWritableDatabase() in
+com.crowdcompass.bearing.client.util.  The code decodes the base64 string
+"YzYwMjQyYzYzOTQ5YzQ3ZDJjMzFjM2M1NjczZDFiMDQzN2Y1N2ExYjI3ODE3MzMyYmYwNWI0YTI2OGJjZDBjNgo"
+to get "c60242c63949c47d2c31c3c5673d1b0437f57a1b27817332bf05b4a268bcd0c6".  It
+is not clear why included the base64 version and then decode it every time, as
+opposed to just hard-coding the decoded version.  Adding the base64 decoding
+makes the program less efficient and obviously doesn't add anything to the
+security of the system.  The authors also changed the default number of times
+the key derivation function is run, but we can just pull that out of the same
+function.  This means that to decrypt tumbleweed.sqlite3, on anyone's phone,
+it's just a matter of this:
+
+    $ sqlcipher app_databases/tumbleweed.sqlite3 
+    SQLCipher version 3.8.6 2014-08-15 11:46:33
+    Enter ".help" for instructions
+    Enter SQL statements terminated with a ";"
+    sqlite> PRAGMA cipher_default_kdf_iter = 4000;
+    sqlite> PRAGMA key = 'c60242c63949c47d2c31c3c5673d1b0437f57a1b27817332bf05b4a268bcd0c6';
+    sqlite> SELECT count() FROM sqlite_master;
+    12
+    sqlite> .schema
+    CREATE TABLE "app_settings" ("pk" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "oid" varchar(10) NOT NULL, "attribute_name" varchar(255) NOT NULL, "attribute_value" text, "asset_file_name" varchar(255), "is_user_setting" boolean DEFAULT 0, "created_at" datetime NOT NULL, "updated_at" datetime NOT NULL, "updated_by" datetime, "last_sync" datetime);
+    CREATE TABLE "light_weight_events" ("pk" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "oid" varchar(10) NOT NULL, "start_date" date NOT NULL, "end_date" date NOT NULL, "time_zone" varchar(255) NOT NULL, "name" varchar(255) NOT NULL, "description" varchar(255) NOT NULL, "locality" varchar(255), "locked" boolean DEFAULT 0 NOT NULL, "type" varchar(255), "icon_url" varchar(255), "directory_info_url" varchar(255), "created_at" datetime NOT NULL, "updated_at" datetime NOT NULL, "updated_by" varchar(255), "last_sync" datetime);
+    CREATE TABLE "events" ("pk" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "oid" varchar(10) NOT NULL, "name" varchar(255) NOT NULL, "short_name" varchar(255) NOT NULL, "event_description" varchar(255) NOT NULL, "time_zone" varchar(255) NOT NULL, "start_date" date NOT NULL, "end_date" date NOT NULL, "sync_url" varchar(255), "event_url" varchar(255), "api_url" varchar(255), "database_url" varchar(255), "database_size" varchar(255), "database_version" varchar(255), "asset_packages" varchar(255), "event_thumb_url" varchar(255), "event_directory_icon_url" varchar(255), "features" varchar(255), "invite_only" boolean DEFAULT 0, "cc_branding" boolean DEFAULT 1, "checkin_disabled" boolean DEFAULT 0, "rating_disabled" boolean DEFAULT 0, "activity_scheduling_disabled" boolean DEFAULT 0, "locality" varchar(255), "venue" varchar(255), "preview" varchar(255), "published" boolean DEFAULT 1, "is_private" boolean DEFAULT 0, "is_hidden" boolean DEFAULT 0, "is_downloaded" boolean DEFAULT 0, "last_update" datetime, "event_secret" varchar(255), "feeds" varchar(255), "game_settings_url" varchar(255), "inactive_limit_seconds" varchar(255), "default_home" varchar(255), "content_mode" varchar(255), "compliance" varchar(255), "created_at" datetime NOT NULL, "updated_at" datetime NOT NULL, "updated_by" varchar(255), "last_sync" datetime);
+    CREATE TABLE "users" ("pk" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "oid" varchar(255) NOT NULL, "event_oid" varchar(255) NOT NULL, "access_token" varchar(255) NOT NULL, "user_json" varchar(255), "last_user_json" varchar(255), "associated_events" varchar(255), "created_at" datetime NOT NULL, "updated_at" datetime NOT NULL, "updated_by" varchar(255), "last_sync" datetime, "ident" varchar(255) NOT NULL);
+    CREATE INDEX "light_weight_events_name_index" ON "light_weight_events" ("name");
+    CREATE INDEX "events_name_index" ON "events" ("name");
+    CREATE INDEX "users_event_oid_index" ON "users" ("event_oid");
+    CREATE INDEX "users_oid_index" ON "users" ("oid");
+    CREATE UNIQUE INDEX "app_settings_oid_index" ON "app_settings" ("oid");
+    CREATE UNIQUE INDEX "light_weight_events_oid_index" ON "light_weight_events" ("oid");
+    CREATE UNIQUE INDEX "events_oid_index" ON "events" ("oid");
+
+The users table does contain personally identifiable information (full name
+and e-mail address) as well as an "access_token".  One may think that it was
+the personal information which prompted the encryption, however the "Web Data"
+database contained name_on_card in the masked_credit_cards table and that
+database was not encrypted.
+
+Some may argue that this isn't a real vulnerability because these files can
+only be extracted with root access.  This argument misses the point though.
+Any time a security measure is added which does not provide the improvements
+in security which are expected, it's a vulnerability.  The authors of this app
+clearly did not think the fact that these files are only accessible by root
+was sufficient, which is why they encrypted them.  This is one of those odd
+situations where a vulnerability could have been avoided by not implementing
+a security feature. Any feature which is added needs to meet the expectation
+or it is a bug, if the bug undermines the level of security which the developer
+was trying to accomplish, then it's a security bug.
+
+
+At this point we stopped looking for vulnerabilities, as the plane had landed
+and it was time to enjoy the conference.  Yes, all of these issues were found
+while in transit to the conference.  The very limited amount of time we spent
+on this and the fact that these issues found so quickly is what prompts us to
+say that we don't think this is a complete list of issues.
+
+
+
+Recap:
+So what did we learn here from this example?  There is the obvious lessons of
+watch out for SQLi[1] and don't use hard coded passwords.[2]  The solution to
+the SQL issue is simple: use parameterized queries.  For the encryption issue
+it's more complicated, and the answer depends on context, which we do not have.
+
+The easiest solution would be to just prompt the user for a password and use
+that to encrypt any sensitive data.  However, this means the user would need to
+enter their password each time the database is opened, which would be at app
+startup at a minimum.  That probably isn't going to be acceptable for this app.
+It makes it more difficult to use.  So if you have this requirement that the
+user not need to remember and enter a password at application startup, this
+means you, as an app developer, aren't going to address the "lost phone"
+scenario.  Sometimes this is fine, as in the case of a game or a conference
+app.  Other times, this is probably not a good idea, as in the case of a
+banking app which would allow transferring money around.  Assuming the no
+password approach is the one being taken, there are still some options.
+Android has a Keystore which would allow keys to be securely stored.  Depending
+on the hardware, this will either lock the secrets in a separate chip, which
+not even root has the ability to extract (however root can alway USE the key).
+If these isn't any hardware security chip on the phone then the security of the
+key lies with the O/S (which means root can extract the key).  The keystore was
+not introduced until API 18.  API 19 is the oldest version supported by
+Google[4], however some developers choose to be compatible with older phones.
+In the event that the Keystore API isn't available, there is the option of
+storing a session key on the phone which allows retrieving the key from the
+server, which turns an offline attack into an online one.  This means that the
+attack can be recorded on the server side, and the key could be made
+inaccessible if the user reported their phone as lost or stolen.  For this app
+that probably doesn't make sense, but if you are a corporate application
+developer it's something to keep in mind (though, hopefully you don't need to
+support phones this old).  This leave us with choosing a random key and storing
+that.  The only way this is any better than using a hard-coded password is that
+not all phones share the same password.  So if the database files were leaked
+by themselves, the data would be safe if the generated password was long and
+strong enough.  However, since the database and the key would be stored in the
+same area, it's unlikely that anyone would have access to one and not the
+other in practice.
+
+The key to making security easier is to clearly define how the system should
+work and who should have access to what.  This means laying out requirements,
+documenting them (at least internally, if not publicly), and making sure that
+everyone involved is on the same page (including the users!).  This will not
+fix things like SQL injection or choosing libraries with vulnerabilities, but
+it will force people to ask question like "why we are adding encryption if
+we give everyone the password to decrypt it?  Who are we trying to deny access
+to?"
+
+The other takeaway is to be mindful about libraries which you use.  If you are
+a library developer or maintainer, think about ways that you can provide people
+with the smallest amount of code possible.  The SQL injection issues in the
+net.sqlcipher.* classes is an example of two things that should be bundled
+separately.  There's the problem of encrypting the database, which is
+independent from the problem of making it easier to build queries.  Developers
+should not have to take one feature if they don't need it.  If you are a
+developer who uses open source libraries, as is the case here with sqlcipher,
+there is always the choice to fork the library so it only includes a subset of
+the features in the main library (the ones you need).  It will make your app
+smaller, possibly faster, and less likely to contain dormant issues which might
+come back to haunt you later (e.g. if the vulnerable functions are used in a
+later version).
+
+
+[1] https://cwe.mitre.org/data/definitions/89.html
+[2] https://cwe.mitre.org/data/definitions/798.html
+[3] https://developer.android.com/training/articles/keystore.html
+[4] https://en.wikipedia.org/wiki/Android_version_history
+
+
+Timeline:
+2017.06.27 - Reported SQLi to sqlcipher developers via github
+2017.06.27 - Reported all issues to security@cvent.com
+2017.06.28 - sqlcipher closed issue as "won't fix" as this method comes from
+             the AOSP, so changing the API isn't an option.  They are not using
+             this method internally and provide methods for preparing queries
+             properly, using parameterized queries.
+             https://github.com/sqlcipher/android-database-sqlcipher/issues/342
+2017.06.28 - Email from security@cvent.com acknowledging but report and stating
+		that they are looking into the issues reported
+2017.06.29 - Email from security@cvent.com indicating they don't see any
+		security concerns (e-mail included below)
+2017.06.30 - Public disclosure
+
+
+
+
+E-mail from security@cvent.com from 2017.06.29:
+
+We have reviewed the findings that you have reported internally. Here are our responses,
+
+1. In the net.sqlcipher.DatabaseUtils.class file, there's a class called DatabaseHelper that contains a method called concatinateWhere(String, String). This is in sqlcipher's code (a library).
+Response: We have checked our code and we dont call this method anywhere. Hence we think we are good here.
+
+2. The appendEscapedSQLString(String, String) method escapes single quotes, which mixes code (the SQL statement) with data (the possibly-user-specified parameter).
+	a. Does it handle all cases properly?  What if the last character in paramString is a backslash?  What about double quotes?
+	b. This is not limited to the net.sqlcipher.* classes. concatenateWhere method in android.support.v4.database.DatabaseUtilsCompat class is also vulnerable.	
+Response: These functions does not take any user input. It comes as a part of andriod sdk. We think this is tied up with the same issue discussed in this link "https://github.com/sqlcipher/android-database-sqlcipher/issues/342" where SQLi has mentioned that they wouldnt be fixing it.
+
+3. There is com.crowdcompass.bearing.client.eventguide.messaging which contains the MessageHistory::deleteKey(String). It is in code that Cvent wrote. This function is private, and only called from cleanUp(String, String). If the second argument to cleanUp can be attacker controlled, then the answer is yes. 
+Response: The second argument in cleanUp(String, String) never takes user input. We use parameterized queries.
+
+4. The app_webview/Cookies database isn't encrypted
+Response: Do you see any exploit around the cookies as we think that an attacker cannot reuse it in any other device since we use CSRF protection? If we encrypt the cookie, we will have to hardcode the key to decrypt it.
+
+5.The "app_webview/Web Data" database - the credit card database. Not sure why was this code in there when it is not used.
+Response: It’s created by android on the fly unrelated to our application. It happens in any app that is written using a ‘webview’.
+
+6.The app_databases/tumbleweed.sqlite3 was encrypted, but it turned out to have a hard-coded password. 
+response: Not a security concern. The concern here is about efficiency of the code.
