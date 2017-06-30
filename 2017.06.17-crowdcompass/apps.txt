@@ -1,4 +1,4 @@
-Below is a list of app the applications we found which are called CrowdCompass,
+Below is a list of the applications we found which are called CrowdCompass,
 which means these are all likely vulnerable.  Note: This is not a complete list,
 as the Google Play store limits search results to 250 apps.
 
