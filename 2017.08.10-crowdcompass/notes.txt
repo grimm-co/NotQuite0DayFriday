@@ -1,0 +1,140 @@
+NITEC17 Mobile Application Brute Force Vulnerability
+
+Overview:
+
+The following is a brief write-up of a vulnerability that was found while
+performing some research on the NITEC17 mobile application.
+
+Triage:
+
+The NITEC17 application was designed for NATO Industry Conference and TechNet
+International. This application was made by Cvent and is a re-branded version
+of a product they call CrowdCompass.  Cvent has released this same app under
+hundreds of other names to match the conferences where it is used.  To
+understand this vulnerability, one must first understand the normal process
+which is followed when a conference uses this app.
+
+First, an administrator populates a database with information about the
+attendees (most importantly their full name).  Next they send out an e-mail
+to all the attendees giving them the password for the conference (the same
+password is shared among all attendees).  They may also include a link to
+the application, or they might just instruct people to search the app store.
+
+1. The attendee downloads the application off of the Google Play Store
+2. The application prompts the user for their name and the user enters their
+   name.
+3. The system then sends the user an email containing a 4 digit PIN.
+4. The application prompts the user for the PIN, upon the correct PIN being
+   entered, registration is complete.
+
+The problem is that the PIN is valid for a certain period of time, and the
+attacker has as many guesses as they can make in that timeframe.  The exact
+period for which the PIN is valid is not known, but it's clearly measured
+in hours.  This means that it is easy for an attacker to try every possible
+PIN for an account.  Without any optimizations, this takes about 20 minutes.
+
+In order to pull off this attack, the attacker need only know the name of a
+single attendee.  The easiest way to pull off this attack would be to take
+the name of one of the speakers.  One logged in, the NITEC17 app had a list
+of all attendees' full names, which means the attacker can now log in as
+anyone they please, send messages, see that person's schedule, and so on.
+
+
+Exploit notes:
+
+First, it's important to note that the proof-of-concept (PoC) exploit was
+written for the NITEC17 event, which has ended.  It won't work on other
+events until the scripts are updated.  We haven't investigated what it would
+take to do so, but at a glance, it looks like it's just the event ID.  No
+investigation was done on whether these can be obtained without authentication,
+so that will be an exercise left to the reader.
+
+The brute.sh script will search a specific range of PINs, but instead of using
+that, it's better to just use the brute_harder.sh script, which runs brute.sh
+multiple times in parallel.  To get the correct PIN, just keep searching the
+output files (there is one per process) for "Correct answer".  This is as easy
+as:
+
+    watch grep "Correct answer" output.*.txt
+
+
+Addressing the problem:
+
+There are a number of things which could be done to address this problem.
+First, the PIN should be invalidated after a certain number of failed attempts.
+Next, the PIN should probably be longer, as even if the attacker only gets N
+attempts, they still have an odds of N/10000 of guessing it for each time they
+run the attack.  Furthermore, they can run the attack as many times at they
+want with the only real cost being that it's going to flood the legitimate
+user with e-mails telling them their PIN.  Finally, there should be some way
+for the user to respond.  There are a lot of possibilities on how this could
+work, but one example would be to provide an "I already set up my phone" link
+which would let Cvent know that the registered device is legit and they should
+not allow any more devices to register.  This could stop the onslaught of
+e-mails that an attacker could trigger.  There are many other ways this could
+be implemented, each with their own pros and cons.
+
+There will always be some chance of the PIN being guessed, but with an 8 digit
+PIN and only 2 tries, odds of that happening would be 1/50,000,000 (0.000002%).
+Furthermore, even if the attacker were extremely lucky and were successful, if
+the user has a way to react, it could allow them to remove the attacker's
+access.
+
+
+
+Below are a nicely formatted version of the JSON used to perform various actions.
+These are just random leftover notes from when we were doing our research, and
+they will make a lot more sense after you read the shell scripts to see how the
+system works.
+
+
+# Request for e-mail code
+{"login_attempt":{
+	"event_oid":"vKx1t90ykc",
+	"authorized_redirect":"nx0imepk9nze://authenticate",
+	"device":"643d9d20-d53f-4fde-b4ca-da3d73bf5393",
+	"confirm_base_url":"https://svc.crowdcompass.com/vKx1t90ykc/confirm/",
+	"answers":[
+		{"challenge_id":"names","first_name":"John","last_name":"Doe"}
+	]
+}}
+
+# Enter code
+{"login_attempt":{
+	"event_oid":"vKx1t90ykc",
+	"authorized_redirect":"nx0imepk9nze://authenticate",
+	"device":"643d9d20-d53f-4fde-b4ca-da3d73bf5393",
+	"confirm_base_url":"https://svc.crowdcompass.com/vKx1t90ykc/confirm/",
+	"answers":[
+		{"challenge_id":"names",
+			"ok":true,
+			"first_name":"John",
+			"last_name":"Doe"},
+		{"challenge_id":"verification_code",
+			"verification_code":"0000"}
+	]
+}}
+
+# hackety hack
+{"login_attempt":{
+	"event_oid":"vKx1t90ykc",
+	"authorized_redirect":"nx0imepk9nze://authenticate",
+	"device":"643d9d20-d53f-4fde-b4ca-da3d73bf5393",
+	"confirm_base_url":"https://svc.crowdcompass.com/vKx1t90ykc/confirm/",
+	"answers":[
+		{"challenge_id":"names",
+			"ok":true,
+			"first_name":"John",
+			"last_name":"Doe"},
+		{"challenge_id":"verification_code",
+			"verification_code":"0000"}
+	]
+}}
+
+Timeline:
+2017.06.26 - Issue reported to security@crowdcompass.com and security@cvent.com
+2017.06.26 - Email to security@crowdcompass.com bounced, security@cvent.com did
+             not bounce
+2017.06.27 - security@cvent.com confirms they've received the report and are
+             looking into it
+2017.08.10 - Public disclosure

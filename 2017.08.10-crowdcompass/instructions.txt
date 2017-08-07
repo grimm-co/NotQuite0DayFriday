@@ -1,0 +1,10 @@
+Since the event is over, the URLs in brute.sh and brute_harder.sh will need to
+be updated to apply to your event.  After these are updated, just run this:
+
+./brute_harder.sh fname lname
+
+It will probably take about 20 minutes, but at then end it should print the
+correct PIN, which you can just enter into the application to log into that
+account.  Just watch the output.*.txt files for the "Correct answer" E.g.:
+
+watch grep "Correct answer" output.*.txt
