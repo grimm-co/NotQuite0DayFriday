@@ -1,0 +1,10 @@
+Application version 5.9 was tested for the brute force vulnerability, however
+the bug could be fixed on the server side without the need to update the
+client.  So while we believe this affects all versions of the app, this is
+not all that relevant in this case.
+
+It is also important to note that NITEC17 was created by CrowdCompass, who
+makes apps for hundreds of conferences.  These are packaged as different apps
+in the app store, but they're affectively all the same application.  This has
+not been tested on the other apps, but it is probable that 250+ applications
+on the Google Play store share the same vulnerability.
