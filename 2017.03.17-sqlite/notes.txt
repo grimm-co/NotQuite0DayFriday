@@ -100,8 +100,8 @@ rax            0x0	0
 rbx            0x0	0
 rcx            0x7ffffff4	2147483636
 rdx            0x207463656a626f20	2338603393739812640	<— String Pointer
-rsi            0x4bb7e0	4962272					<— Stream Pointer
-rdi            0x7ffff79b1620	140737347524128			<— Format String
+rsi            0x4bb7e0	4962272					<— Format String
+rdi            0x7ffff79b1620	140737347524128			<— Stream Pointer
 rbp            0x7fffffffc8a0	0x7fffffffc8a0
 rsp            0x7fffffffb070	0x7fffffffb070
 r8             0x0	0
