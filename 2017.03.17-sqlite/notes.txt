@@ -121,7 +121,7 @@ es             0x0	0
 fs             0x0	0
 gs             0x0	0
 
-In the case of fprintf(), the stream pointer is stored in RSI, the pointer to the format string is stored in RDI, and the pointer to the string that should be included in the format string (%s) is stored in RDI. As we suspected, the string pointer (pVfs->zName) looked fairly suspicious. Since the value stored in pVfs->zName did not appear to be a valid pointer, we shifted our attention to where pVfs is set. 
+In the case of fprintf(), the stream pointer is stored in RDI, the pointer to the format string is stored in RSI, and the pointer to the string that should be included in the format string (%s) is stored in RDX. As we suspected, the string pointer (pVfs->zName) looked fairly suspicious. Since the value stored in pVfs->zName did not appear to be a valid pointer, we shifted our attention to where pVfs is set. 
 
 When declared, the pointer to pVfs is left uninitialized. Since the pointer is declared as a local variable, its value at the time of its declaration is whatever stale data exists on the top of the current stack. The sqlite3_file_control() function is responsible for initializing the pVfs pointer. However, sqlite3_file_control()  can terminate prior to initializing the pVfs pointer.
 
