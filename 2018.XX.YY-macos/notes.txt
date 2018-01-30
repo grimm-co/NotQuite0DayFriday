@@ -2,10 +2,13 @@ A Series of macOS Denial Of Service Bugs in the workq_kernreturn syscall
 
 Overview:
 The following is a write-up of 3 Denial of Service bugs found while fuzzing the
-macOS workq_kernreturn syscall.
+macOS workq_kernreturn syscall.  The workq_kernreturn syscall is part of the
+kqueue subsystem, implemented in the libpthread's kernel extension.
 
 Affected Versions:
-TODO
+Bug 1: libpthread-301.1.6
+Bug 2: libpthread-301.1.6
+Bug 3: 
 
 Discovery Environment:
 macOS High Sierra inside VMware Fusion
@@ -18,12 +21,20 @@ $ ./exploit2
 $ clang exploit3.c -o exploit3
 $ ./exploit2
 
+Background:
+TODO write something about the kqueue subsystem.
+
 Triage of bug 1:
 The investigation began when our fuzzer found a test case for workq_kernreturn
 that crashed macOS.  As such, we went to review the workq_kernreturn syscall
-implementation. Looking through the syscall table, we see that the
-workq_kernreturn syscall is implemented by the workq_kernreturn function in
-bsd/kern/pthread_shims.c (https://opensource.apple.com/source/xnu/xnu-4570.1.46/bsd/kern/pthread_shims.c.auto.html).
+implementation.  The crash report from macOS gave the following details:
+
+*** Panic Report ***
+panic(cpu 0 caller 0xffffff8004d6e164): "Unbound thread called kevent_internal with id=-1"
+	" uu_kqueue_flags:0x0, uu_kqueue_bound:0"@/Users/test/delicious/kernel/xnu-4570.1.46/bsd/kern/kern_event.c:3881
+
+Looking through the syscall table, we see that the workq_kernreturn syscall is
+implemented by the workq_kernreturn function in bsd/kern/pthread_shims.c (https://opensource.apple.com/source/xnu/xnu-4570.1.46/bsd/kern/pthread_shims.c.auto.html).
 However, as shown below, this syscall is merely a shim for the libpthread kernel
 extension.
 
@@ -33,12 +44,12 @@ workq_kernreturn(struct proc *p, struct workq_kernreturn_args *uap, int32_t *ret
   return pthread_functions->workq_kernreturn(p, uap->options, uap->item, uap->affinity, uap->prio, retval);
 }
 
-Thankfully, libpthread is also open source and easily reviewed.  The relevant
+Fortunately, libpthread is also open source and easily reviewed.  The relevant
 function is also named workq_kernreturn and located in kern/kern_support.c (https://opensource.apple.com/source/libpthread/libpthread-301.1.6/kern/kern_support.c.auto.html).
 The workq_kernreturn function's implementation varies based on the option
 parameter (the second syscall argument).  Our fuzzer indicated that the crashing
 test case passed in an option of 0x100.  This value corresponds to the option
-WQOPS_THREAD_WORKLOOP_RETURN. The relevant code for this option is shown below.
+WQOPS_THREAD_WORKLOOP_RETURN.  The relevant code for this option is shown below.
 
 case WQOPS_THREAD_KEVENT_RETURN:
 case WQOPS_THREAD_WORKLOOP_RETURN:
@@ -58,13 +69,14 @@ case WQOPS_THREAD_WORKLOOP_RETURN:
 
 As can be seen, the code passes a series of arguments to the XNU function
 kevent_id_internal, some of which are taken from our input (item and arg2).
-Notice that the kevent_id passed in is -1. Moving along, we take a look at the
+Notice however, that the kevent_id passed in is -1.  Moving along, we take a look at the
 implementation of the kevent_id_internal function (in bsd/kern/kern_event.c, see https://opensource.apple.com/source/xnu/xnu-4570.1.46/bsd/kern/kern_event.c).
 kevent_id_internal is merely a wrapper for kevent_internal that ensures the
 passed in flags set the KEVENT_FLAG_KERNEL and KEVENT_FLAG_DYNAMIC_KQUEUE
 values.  Moving along to kevent_internal, we can see that kevent_internal starts
-with some argument validation and userland copyin functions. Afterwards, it
-calls kevent_get_kq with the passed in kern_event.  The relevant code
+with some argument validation and userland copyin functions.  Afterwards, it
+calls kevent_get_kq with the passed in kern_event.  The relevant code is shown
+below:
 
   if (flags & KEVENT_FLAG_DYNAMIC_KQUEUE) {
     assert(flags & KEVENT_FLAG_WORKLOOP);
@@ -91,30 +103,63 @@ calls kevent_get_kq with the passed in kern_event.  The relevant code
                 ut->uu_kqueue_flags, ut->uu_kqueue_bound);
         }
 
-TODO Finish this write up
+Thus, we've finally traced back to the panic message we were given.  From the
+code above, it looks like this function expected our thread to be bound to a
+kevent workqueue.  Since we haven't setup any prior kqueues, we fail this
+assumption.  Based on this code, we can see that libpthread makes the assumption
+that only bound threads will call workq_kernreturn with the WQOPS_THREAD_WORKLOOP_RETURN
+option.  However, this is not true, and thus we're able to cause a crash via
+the above panic call.
+
+Triage of bug 2:
+The investigation began when our fuzzer found another test case for
+workq_kernreturn that crashed macOS.  Unlike the previous bug, this bug was not
+as easily triaged.  Rather than the easily identifiable panic message shown
+above, the resulting macOS crash report merely listed:
+
+panic(cpu 2 caller 0xffffff80027363ff): "zalloc: zone map exhausted while allocating from zone pthread.threadreq, likely due to memory leak in zone
+	pthread.threadreq (3035919840 total bytes, 126496660 elements allocated)"@/Users/test/delicious/kernel/xnu-4570.1.46/osfmk/kern/zalloc.c:3268
+
+However, triaging from the crashing test case easily reveals the bug.  The
+crash occurred when the syscall was called with the following arguments:
+
+syscall(368, WQOPS_QUEUE_REQTHREADS, NULL, INT32_MAX, 0x400000cc); //368 = workq_kernreturn
+
+Following the syscall implementation for workq_kernreturn with the
+WQOPS_QUEUE_REQTHREADS option, we find the offending code in the
+wqops_queue_reqthreads function in libpthread's kern/kern_support.c (https://opensource.apple.com/source/libpthread/libpthread-301.1.6/kern/kern_support.c.auto.html).
+In this code, reqcount is an integer taken directly from the second syscall
+argument.
+
+if ((reqcount <= 0) || (class < 0) || (class >= WORKQUEUE_NUM_BUCKETS) ||     
+	(overcommit && event_manager)) {                                          
+	return EINVAL;                                                              
+}                                                                             
+
+...
+
+while (reqcount-- && !_wq_exiting(wq)) {
+	struct threadreq req;
+	_threadreq_init_stack(&req, class, tr_flags);
+
+	workqueue_run_threadreq_and_unlock(p, wq, NULL, &req, true);
+
+	workqueue_lock_spin(wq); /* reacquire */
+	_threadreq_copy_prepare(wq);
+}
+
+Based on this function, we can see that the code is allocating threads for the
+userland program.  The syscall above asks the kernel to create INT32_MAX
+threads.  In the _threadreq_copy_prepare function call, a threadreq struct is
+allocated for each thread from the pthread.threadreq zone.  Because the zone
+allocator cannot allocate INT32_MAX threadreq structures, the zone allocator
+panics causing a crash.  The video below uses the zprint command to show the
+effect that the above syscall has on the pthread.threadreq zone.
+
+TODO get the video of sudo watch -d -n 0.25 zprint pthread.threadreq
 
 
-The workq_kernreturn syscall when passed the WQOPS_THREAD_WORKLOOP_RETURN option
-results in a failed assert, causing a kernel panic.  This bug is the result of
-the pthread kernel extension  calling the kevent_internal function in the XNU
-kernel incorrectly.
-
-
-
-
-workq_kernreturn2
-
-TODO
-
-The workq_kernreturn syscall when passed the WQOPS_QUEUE_REQTHREADS option
-causes the pthread kernel extension to attempt to create a user controlled
-number of threads.  However, the pthread kernel extension does not check the
-number of threads requested, and causes a tight loop on this value.  For each
-thread requested, a threadreq struct is allocated from the kernel zone-based
-allocator.  When this allocator runs out of memory, it will cause a kernel
-assert and kernel panic.
-
-
+Triage of bug 3:
 workq_kernreturn3
 
 TODO
