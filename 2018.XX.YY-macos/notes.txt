@@ -18,9 +18,6 @@ $ ./workq_kernreturn
 $ clang workq_kernreturn2.c -o workq_kernreturn2
 $ ./workq_kernreturn2
 
-Background:
-TODO write something about the kqueue subsystem.
-
 Triage of bug 1:
 The investigation began when our fuzzer found a test case for workq_kernreturn
 that crashed macOS.  As such, we went to review the workq_kernreturn syscall
@@ -151,8 +148,9 @@ userland program.  The syscall above asks the kernel to create INT32_MAX
 threads.  In the _threadreq_copy_prepare function call, a threadreq struct is
 allocated in the kernel for each thread from the pthread.threadreq zone.
 Because the zone allocator cannot allocate INT32_MAX threadreq structures, the
-zone allocator panics causing a crash.  The video below uses the zprint command
-to show the effect that the above syscall has on the pthread.threadreq zone.
+zone allocator panics causing a crash.
 
-TODO get the video of sudo watch -d -n 0.25 zprint pthread.threadreq
+The included video uses the zprint command to show the effect that the above
+syscall has on the pthread.threadreq zone.  Once the zone allocator is no longer
+able to service these requests, the macOS crashes and the screen freezes.
 
