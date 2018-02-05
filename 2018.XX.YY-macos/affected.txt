@@ -1,8 +1,6 @@
-This bug affects MacOS versions XXXX through YYYY (inclusive).  Exercising the
-bug results in a kernel crash. This bug lasted XX months (XXXX-YYYY) before it
-was patched.
-
-This bug was reported to Apple on XX/YY/ZZZZ.
+This bug affects the kernel extensions that are part of libpthread version
+301.1.6.  Exercising the bug results in a kernel crash. This bug was reported to
+Apple on XX/YY/ZZZZ.
 
 TODO links to security fix on apple.
 
