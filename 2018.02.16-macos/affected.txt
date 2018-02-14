@@ -1,0 +1,7 @@
+This bug affects the kernel extensions that are part of libpthread version
+301.1.6.  Exercising the bug results in a kernel crash. This bug was reported to
+Apple on 02/06/2018.
+
+Apple responded on 02/09/2018 confirming they were able to reproduce the issues
+and stating that they "do not see any security implications" in either of these
+bugs.
