@@ -36,17 +36,17 @@ TocEntries in the ccd header.  However, the TocEntries value is not checked for
 a realistic value before being sent to xmalloc.  The code listing below from
 src/ccd.c shows the code which is responsible for this bug.
 
-	if (sscanf (line, " TocEntries = %d ", &TocEntries) == 1
-	&& TocEntries > 0
-	&& ccd->Disc.TocEntries == 0)
-	{
-		/* Consider the indicated number of "Toc" sections as an
-		   authoritative reference. */
-		ccd->Disc.TocEntries = TocEntries;
-		/* Allocate the necessary space to accommodate all "Toc"
-		   sections. */
-		ccd->Entry = xmalloc (sizeof (*ccd->Entry) * (ccd->Disc.TocEntries + 1));
-	}
+  if (sscanf (line, " TocEntries = %d ", &TocEntries) == 1
+  && TocEntries > 0
+  && ccd->Disc.TocEntries == 0)
+  {
+    /* Consider the indicated number of "Toc" sections as an
+       authoritative reference. */
+    ccd->Disc.TocEntries = TocEntries;
+    /* Allocate the necessary space to accommodate all "Toc"
+       sections. */
+    ccd->Entry = xmalloc (sizeof (*ccd->Entry) * (ccd->Disc.TocEntries + 1));
+  }
 
 Our fuzzer found this issue on a 32-bit build, but we could not reproduce it on
 a 64-bit build.  This is due to 2 differences between the 32-bit and 64-bit
