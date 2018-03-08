@@ -1,14 +1,15 @@
 ccd2cue bugs
 
 Overview:
-The following is a write-up of XXX bugs found while fuzzing
-the ccd2cue.
+The following is a write-up of 2 bugs found while fuzzing ccd2cue.
 
-Affected Versions:
 Bug 1: Heap Corruption
 Bug 2: Heap Corruption
 
 Discovery Environment:
+Ubuntu 16.04 LTS 32-bit
+ccd2cue version 0.5
+
 
 
 Bug 1:
@@ -29,6 +30,8 @@ will point to a now freed heap chunk when the NULL character is written.
     str = realloc (str, str_end - str + 1);
     *str_end = '\0';
   }
+
+
 
 Bug 2:
 While parsing the ccd file, ccd2cue uses sscanf to grab the number of
