@@ -4,13 +4,12 @@ Overview:
 The following is a write-up of 2 bugs found while fuzzing ccd2cue.
 
 Bug 1: Heap Corruption
-Bug 2: Heap Corruption
+Bug 2: Integer Overflow leading to Heap Corruption
+Bug 3: Integer Overflow leading to Heap Corruption
 
 Discovery Environment:
 Ubuntu 16.04 LTS 32-bit
 ccd2cue version 0.5
-
-
 
 Bug 1:
 In src/file.c, the function make_reference_name can be made to write a NULL
@@ -31,7 +30,18 @@ will point to a now freed heap chunk when the NULL character is written.
     *str_end = '\0';
   }
 
+Impact:
+While this bug will cause heap corruption, the only value that can be written is
+a single NULL character.  Further, the vulnerable function is only called at the
+very beginning of the program before any parsing of the ccd file has taken
+place. Thus, there wouldn't be any chance for heap grooming before the
+vulnerable code is run.  As such, exploitation of this bug would be extremely
+difficult, if possible at all.
 
+Further, the value of str in the code above is taken from a command line option
+that specifies the filename. In most cases where an attacker can control the
+options to a program and the filename of a file, the attacker will already have
+the ability to run arbitrary commands and will not need to exploit this bug.
 
 Bug 2:
 While parsing the ccd file, ccd2cue uses sscanf to grab the number of
@@ -83,7 +93,41 @@ happen.
 
 On 64-bit:
 0x402d46 <stream2ccd+794>:   add    eax,0x1
-0x402d49 <stream2ccd+797>:   cdqe   
+0x402d49 <stream2ccd+797>:   cdqe
 0x402d4b <stream2ccd+799>:   shl    rax,0x3
 0x402d4f <stream2ccd+803>:   lea    rdx,[rax*8+0x0]
+
+Impact:
+This bug allows for overwriting of heap data with attacker controlled contents.
+Further, this bug occurs during the parsing loop, and thus the attacker has the
+chance to groom the heap section by reading other data sections before
+triggering this bug.  As this bug is caused by a malformed file, an attacker
+would not be able to modify the addresses needed for an exploit during
+execution.  However, the default build options of ccd2cue produce a non-ASLR
+binary.  While this bug would take some work to make a reliable exploit, it is
+most likely exploitable.
+
+Bug 3:
+Similar to Bug 2, ccd2cue does not prevent an integer overflow while parsing the
+ccd header values.  In this case, ccd2cue does not check the value of the
+Sessions header value prior to a call to xmalloc.  This code listing below shows
+the vulnerable code:
+
+  if (sscanf (line, " Sessions = %d ", &Sessions) == 1
+  && Sessions > 0
+  && ccd->Disc.Sessions == 0)
+  {
+    /* Consider the indicated number of "Session" sections as an
+       authoritative reference. */
+    ccd->Disc.Sessions = Sessions;
+    /* Allocate the necessary space to accommodate all "Session"
+       sections. */
+    ccd->Session = xmalloc (sizeof (*ccd->Session) * (ccd->Disc.Sessions + 1));
+  }
+
+Impact:
+As this bug is almost identical to Bug 2, it will have the same impact as Bug 2.
+
+
+
 
