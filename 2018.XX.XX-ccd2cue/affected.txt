@@ -1,4 +1,4 @@
 These bugs affects the ccd2cue 0.5. This bug was reported to the author on
-XX/XX/XXXX.
+03/12/2018.
 
 They responded on XX/XX/XXXX ...
