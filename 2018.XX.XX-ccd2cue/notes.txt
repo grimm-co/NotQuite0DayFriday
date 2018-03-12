@@ -11,6 +11,12 @@ Discovery Environment:
 Ubuntu 16.04 LTS 32-bit
 ccd2cue version 0.5
 
+Exercising:
+Bug 1 and 2: ccd2cue -o /dev/null toc_and_make_reference_name.ccd
+Bug 3:       ccd2cue -o /dev/null session.ccd
+
+Description:
+
 Bug 1:
 In src/file.c, the function make_reference_name can be made to write a NULL
 character to an invalid heap pointer.  In the code below, str is a heap char
