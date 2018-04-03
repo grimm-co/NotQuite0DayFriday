@@ -1,0 +1,5 @@
+This bug was first found in the XNU kernel version 4570.1.46 and was patched
+in the 10.13.4 kernel update (version 4570.51.1).  Exercising the bug results in
+a heap overflow which can be turned into an information leak and eventually
+arbitrary code execution.
+
