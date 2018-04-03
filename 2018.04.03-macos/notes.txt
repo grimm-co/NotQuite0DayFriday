@@ -3,7 +3,7 @@ Heap overflow in the necp_client_action syscall
 Overview:
 The following is a write-up of a heap overflow vulnerability found while fuzzing
 the macOS necp_client_action syscall.  The necp_client_action syscall is part of
-the Network Extension Control Policy kernel subsystem.
+the Network Extension Control Policy (NECP) kernel subsystem.
 
 Affected Versions:
 XNU kernel versions 4570.1.46 and later until 4570.51.1
@@ -20,20 +20,20 @@ $ clang uaf.c -o uaf
 $ ./uaf
 
 Triage:
-While investigating the NECP subsystem during the implementation of a syscall
+While investigating the NECP subsystem during the development of a syscall
 fuzzer for the necp_client_action syscall, we traced one code path that lead to
 a memcpy with an unchecked user-provided length.
 
 Looking through the necp_client_action function in bsd/net/necp_client.c, we can
-see that it is merely a wrapper for several different actions.
-The vulnerable case occurs when the action parameter to necp_client_action is
-set to NECP_CLIENT_UPDATE_CACHE.  necp_client_action then calls the function
+see that it is merely a wrapper for several different actions. The vulnerable
+case occurs when the action parameter to necp_client_action is set to
+NECP_CLIENT_UPDATE_CACHE.  necp_client_action then calls the function
 necp_client_update_cache.
 
-The necp_client_update_cache function is meant to manage TCP related statistics
-information for a connection.  Thus, this function will error out if not called
-with a NECP client UUID that has a valid connection assigned to it. After
-checking the UUID, this copies in a user provided necp_cache_buffer struct.
+The necp_client_update_cache function is meant to manage TCP related information
+for a connection.  Thus, this function will error out if not called with a NECP
+client UUID that has a valid connection assigned to it. After checking the UUID,
+this function copies in a user provided necp_cache_buffer struct onto the stack.
 This struct, looks as follows:
 
 	typedef struct necp_cache_buffer {
@@ -45,7 +45,7 @@ This struct, looks as follows:
 
 If the buf_type and buf_ver are NECP_CLIENT_CACHE_TYPE_TFO and
 NECP_CLIENT_CACHE_TYPE_TFO_VER_1 respectively, necp_client_update_cache will
-attempt to read in a necp_tcp_tfo_cache struct and call
+attempt to read a necp_tcp_tfo_cache struct from the user and call
 tcp_heuristics_tfo_update with it.  This struct, shown below, is notable as
 it includes a user controlled buffer of up to 0x10 characters and a length for
 that buffer.
@@ -53,17 +53,17 @@ that buffer.
 	typedef struct necp_tcp_tfo_cache {
 		u_int8_t                necp_tcp_tfo_cookie[NECP_TFO_COOKIE_LEN_MAX];
 		u_int8_t                necp_tcp_tfo_cookie_len;
-		u_int8_t                necp_tcp_tfo_heuristics_success:1; // TFO succeeded with data in the SYN
-		u_int8_t                necp_tcp_tfo_heuristics_loss:1; // TFO SYN-loss with data
-		u_int8_t                necp_tcp_tfo_heuristics_middlebox:1; // TFO middlebox detected
-		u_int8_t                necp_tcp_tfo_heuristics_success_req:1; // TFO succeeded with the TFO-option in the SYN
-		u_int8_t                necp_tcp_tfo_heuristics_loss_req:1; // TFO SYN-loss with the TFO-option
-		u_int8_t                necp_tcp_tfo_heuristics_rst_data:1; // Recevied RST upon SYN with data in the SYN
-		u_int8_t                necp_tcp_tfo_heuristics_rst_req:1; // Received RST upon SYN with the TFO-option
+		u_int8_t                necp_tcp_tfo_heuristics_success:1;
+		u_int8_t                necp_tcp_tfo_heuristics_loss:1;
+		u_int8_t                necp_tcp_tfo_heuristics_middlebox:1;
+		u_int8_t                necp_tcp_tfo_heuristics_success_req:1;
+		u_int8_t                necp_tcp_tfo_heuristics_loss_req:1;
+		u_int8_t                necp_tcp_tfo_heuristics_rst_data:1;
+		u_int8_t                necp_tcp_tfo_heuristics_rst_req:1;
 	} necp_tcp_tfo_cache;
 
 The tcp_heuristics_tfo_update (in bsd/netinet/tcp_cache.c) processes the
-necp_tcp_tfo_cache struct, ultimately running into this code:
+necp_tcp_tfo_cache struct, in the following lines of code:
 
 	if (necp_buffer->necp_tcp_tfo_cookie_len != 0) {
 		tcp_cache_set_cookie_common(&tcks,
@@ -92,17 +92,17 @@ current connection and copies the cookie to that struct.
 
 However, the tc_tfo_cookie is at most 0x10 bytes long.  Thus, if an attacker
 specified a parameter larger than 0x10 bytes, the memcpy would overflow the
-tpcache struct on the heap and write data past it.  As the source cookie is
+tcp_cache struct on the heap and write data past it.  As the source cookie is
 located on the stack, the heap will be overflown with the stack contents.
 Immediately after the cookie on the stack is the rest of the necp_tcp_tfo_cache
-struct.  However, the remaining fields in the struct only account for a
-few bytes.  After the end of the necp_tcp_tfo_cache struct, the user is not
-able to control any other bytes that will be used in the overflow.
+struct.  However, the remaining fields in the struct only account for two bytes.
+After the end of the necp_tcp_tfo_cache struct, the user is not able to control
+any other bytes that will be used in the overflow.
 
-The tcp_getcache_with_lock function will attempt to find an existing tcp_cache
-struct for the local and remote hosts.  If one is not found, a new one will
-be created.  However, there is a limit on the number of tcp_cache structures
-that will be created.
+The tcp_getcache_with_lock function attempts to find an existing tcp_cache
+struct for the local and remote hosts associated with a connection.  If one is
+not found, a new one will be created.  However, there is a limit on the number
+of tcp_cache structures that will be created.
 
 Bug Fix:
 So how was this bug fixed?  While the source code for the XNU kernel has not
@@ -117,14 +117,14 @@ address 0xFFFFFF800060DE59, the following instructions were added:
 	copies edx bytes from necp_tcp_tfo_cookie (rsi) to tpcache (rdi)
 
 This assembly compares the necp_tcp_tfo_cookie_len parameter to 0x10, and only
-if it is less than 0x10 does that value get used in memcpy.  Thus any attempt to
-write more than 0x10 bytes results in 0x10 bytes being written.
+if it is less than 0x10 does that value get used in the following memcpy.  Thus
+any attempt to write more than 0x10 bytes results in 0x10 bytes being written.
 
 Heap Analysis:
 This bug allows for a heap overflow in the kernel heap.  More specifically, the
-overflown tcp_cache struct is in the kalloc.80 zone.  As such, any
-exploitation attempts will naturally look to overflow the tcp_cache struct
-into another kalloc.80 zone.  As such, we began our analysis by looking for
+overflown tcp_cache struct is in the kalloc.80 zone.  As such, any exploitation
+attempts will naturally look to overflow the tcp_cache struct into another
+allocation in the kalloc.80 zone.  As such, we began our analysis by looking for
 kalloc.80 allocations.  While the number of kalloc.80 allocations was quite
 limited, we were able to find three useful allocations.
 
@@ -133,26 +133,27 @@ bsd/net/necp_client.c).  This function allows a user to tag a socket with a
 domain and account attribute. These strings are allowed to be any size and can
 be created, read, and freed whenever the user wants.  These allocations are
 great for reading out any leaked content.  Further they can also be used to
-groom the kernel heap.  However, each socket can only create two necp attribute
-strings.  Thus the total number of necp attribute strings is limited by the
+groom the kernel heap.  However, each socket can only create two NECP attribute
+strings.  Thus the total number of NECP attribute strings is limited by the
 limit on open file descriptors.
 
 The second allocation found was the IO vector metadata struct (struct uio,
-defined in bsd/sys/uio_internal.h).  This struct is used for doing scatter
-gather memory operations in the kernel.  When the uio struct is created via
-uio_create (in bsd/kern/kern_subr.c), the IO vector information array is
+defined in bsd/sys/uio_internal.h).  This struct is used for doing
+scatter/gather memory operations in the kernel.  When the uio struct is created
+via uio_create (in bsd/kern/kern_subr.c), the IO vector information array is
 stored immediately after the uio struct.  As such, by adjusting the number of
 IO vectors stored in the uio struct, we can control size.  By creating a uio
-struct with a single IO vector, the uio struct will be declared in the
-kalloc.80 zone.  These structures can be declared and freed through the use of
-the recvmsg_x syscall.  This struct is more useful for heap grooming than
-the necp allocation strings, as one struct per thread can be created.
+struct with a single IO vector, the uio struct will be declared in the kalloc.80
+zone.  These structures can be declared and freed through the use of the
+recvmsg_x and sendmsg_x syscall.  This struct is more useful for heap grooming
+than the NECP allocation strings, as one struct per thread can be created.
 
 The third allocation is used in the POSIX shared memory subsystem (in
 bsd/kern/posix_shm.c).  This subsystem allows processes to setup shared memory
 regions that are mapped in both processes.  These shared memory regions are
 tracked with the pshminfo struct, shown below.  This struct will be useful
-during exploitation due to the usecount that is early on in the struct.
+during exploitation due to the pshm_usecount reference counter that is early on
+in the struct.
 
 #define PSHMNAMLEN  31  /* maximum name segment length we bother with */
 struct pshminfo {
@@ -171,11 +172,12 @@ Obtaining an information Leak:
 
 Now that we have our target allocations setup, we can begin working on the
 exploit.  Our first goal will be to obtain an information leak and deduce the
-kernel slide.  This is achieved by flooding the kalloc.80 zone with necp
-attribute strings, freeing every other necp attribute string, and then causing
-the overflow.  Once the overflow has occurred, we will read out the necp
-attribute strings looking for one that has had its contents changed.  This leak
-is demonstrated in the included leak.c file.
+kernel slide.  This is achieved by flooding the kalloc.80 zone with NECP
+attribute strings, freeing every other NECP attribute string, and then causing
+the overflow.  Once the overflow has occurred, we will read out the NECP
+attribute strings looking for one that has had its contents changed.  The new
+contents will contain the bytes from the kernel stack. This information leak is
+demonstrated in the included leak.c file.
 
 Exploit Development:
 
@@ -185,13 +187,14 @@ The proof of concept for this exploit development is contained in the included
 uaf.c file.  This proof of concept is not-deterministic and may require
 a few runs to execute properly.
 
-Due to the design of the XNU kernel heap, it is not possible to overflow into
-kernel heap metadata.  As such, we must try to overwrite the contents of another
-kernel heap chunk.  Further, as the heap overflow does not control the contents
-that are written, we must find a way to create more powerful exploit primitives.
+Due to the design of the XNU kernel zone allocator, it is not possible to
+overflow into kernel heap metadata.  As such, we must try to overwrite the
+contents of another kernel heap chunk.  Further, as the heap overflow does not
+control the contents that are written, we must find a way to create more
+powerful exploit primitives.
 
 As described previously, we will be concentrating on the pshminfo struct for
-exploitation.  This struct contains a reference counter at index 4.  When SHM
+exploitation.  This struct contains a reference counter at byte 4.  When SHM
 regions are deleted, this reference counter is decremented.  If the counter
 reaches zero, then the pshminfo struct is freed.  By overflowing into the
 pshminfo's reference counter and corrupting it, we will be able to turn this
@@ -210,34 +213,37 @@ achieve as the kalloc.80 zone is rather static and not used by many things in
 the kernel.  However, we will need to identify which of the pshminfo structures 
 is immediately after the overflown tcp_cache struct.  However, as the pshm_flags
 field will be corrupted, it will most likely not be valid.  Further, if the
-pshm_flags field is set properly, shm_unlink will fail when called.  Thus, we
-can detect the overflown SHM region, by calling shm_unlink on each of the SHM
+pshm_flags field is not set properly, shm_unlink will fail when called.  Thus,
+we can detect the overflown SHM region, by calling shm_unlink on each of the SHM
 regions and looking for a failure.
 
 Once we've identified the SHM region that was overflown, we'll next need to
 correct the region's pshminfo's pshm_flags field.  Unfortunately, we do cannot
 control the contents of the heap overflow, so we cannot directly set the value.
-However, during our testing, the value overflown is uninitialized stack data. As
-such, the value can be different for each necp_client_action syscall. Thus, our
-proof of concept, continually does the heap overflow until the flag is set to
-an acceptable value.
+However, during our testing, the value overflown into the pshm_flags field is
+uninitialized stack data. As such, the value can be different for each
+necp_client_action syscall. Thus, our proof of concept continually triggers the
+heap overflow until the flag is set to an acceptable value.
 
 Now that we've managed to set a valid pshm_flags value and corrupt the reference
 count, we can cause the use after free.  Prior to the most recent corruption,
 our proof of concept opens the overflown SHM region 252 more times.  As such, we
 will most likely be able to close the SHM region more times than the corrupted
 reference counter.  Our proof of concept closes each of the SHM regions and
-creates a necp attribute string immediately after.  Once the pshminfo's
+creates a NECP attribute string immediately after.  Once the pshminfo's
 reference counter hits 0, it will be freed, and the next attribute string will
-be placed on top of it.  As we still maintain other references to the SHM
-region, we will have causes a use after free condition on the pshminfo
-structure.  To illustrate the use after free, our proof of concept prints out
-the information about the SHM region obtained via the proc_info syscall.
+be placed at the same memory location.  As the kernel still maintains other
+references to the SHM region, we will have caused a use after free condition on
+the pshminfo structure.  To illustrate the use after free, our proof of concept
+prints out the information about the SHM region obtained via the proc_info
+syscall.  As the pshminfo struct for the SHM region and our NECP attribute
+string are on the same memory region, the pshminfo struct will have been
+overwritten with the contents of our NECP attribute string (0x41).
 
-The next steps in our exploitation plan was to setup the necp attribute string
+The next steps in our exploitation plan was to setup the NECP attribute string
 such that the remaining references to the SHM region could cause another use
 after free.  In the freed memory, a uio struct would be allocated which we could
-control and read via the necp attribute string also occupying that region of
+control and read via the NECP attribute string also occupying that region of
 memory.  With the ability to read and modify a uio struct, the exploit should be
 able to achieve arbitrary read/write of kernel memory.
 

@@ -659,12 +659,12 @@ int main(int argc, char ** argv)
 
 		if(i == MAX_FLAG_OVERFLOW_TRIES)
 		{
-			printf("Couldn't get the overflow after %d tries, exiting\n", MAX_FLAG_OVERFLOW_TRIES);
+			printf("Couldn't set a valid pshm_flags value after %d tries, exiting\n", MAX_FLAG_OVERFLOW_TRIES);
 			exit(1);
 		}
 		else if(i % 10000 == 0 && i != 0)
 		{
-			printf("Couldn't get the overflow after %d tries, try sleeping a bit?\n", i);
+			printf("Couldn't set a valid pshm_flags value after %d tries, try sleeping a bit?\n", i);
 			nanosleep(&sleeptime, NULL);
 		}
 	}
