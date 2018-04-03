@@ -9,13 +9,15 @@ Affected Versions:
 XNU kernel versions 4570.1.46 and later until 4570.51.1
 
 Discovery Environment:
-macOS High Sierra inside VMware Fusion
+macOS High Sierra inside VMware Fusion running a custom version of XNU 4570.1.46
 
 Exercising:
 $ clang poc.c -o poc
 $ ./poc
 $ clang leak.c -o leak
 $ ./leak
+$ clang overwrite.c -o overwrite
+$ ./overwrite
 
 Triage:
 While investigating the NECP subsystem during the implementation of a syscall
@@ -130,7 +132,10 @@ The first allocation is made by the necp_set_socket_attributes function (in
 bsd/net/necp_client.c).  This function allows a user to tag a socket with a
 domain and account attribute. These strings are allowed to be any size and can
 be created, read, and freed whenever the user wants.  These allocations are
-great for reading out any leaked content.
+great for reading out any leaked content.  Further they can also be used to
+groom the kernel heap.  However, each socket can only create two necp attribute
+strings.  Thus the total number of necp attribute strings is limited by the
+limit on open file descriptors.
 
 The second allocation found was the IO vector metadata structure (struct uio,
 defined in bsd/sys/uio_internal.h).  This structure is used for doing scatter
@@ -140,7 +145,8 @@ stored immediately after the uio structure.  As such, by adjusting the number of
 IO vectors stored in the uio structure, we can control size.  By creating a uio
 structure with a single IO vector, the uio structure will be declared in the
 kalloc.80 zone.  These structures can be declared and freed through the use of
-the recvmsg_x syscall.
+the recvmsg_x syscall.  This structure is more useful for heap grooming than
+the necp allocation strings, as one structure per thread can be created.
 
 The third allocation is used in the POSIX shared memory subsystem (in
 bsd/kern/posix_shm.c).  This subsystem allows processes to setup shared memory
@@ -172,6 +178,22 @@ attribute strings looking for one that has had its contents changed.  This leak
 is demonstrated in the included leak.c file.
 
 Exploit Development:
+
+Unfortunately, we were unable to finish our exploit prior to the vulnerability
+being fixed.  This section will describe our initial exploitation development.
+
+Due to the design of the XNU kernel heap, it is not possible to overflow into
+kernel heap metadata.  As such, we must try to overwrite the contents of another
+kernel heap chunk.  As described previously, we will be concentrating on the
+pshminfo structure for exploitation.
+
+
+
+
+
+
+
+
 
 
 
