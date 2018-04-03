@@ -683,7 +683,7 @@ int main(int argc, char ** argv)
 	}
 
 	//At this point we've overlapped a pshminfo struct and a NECP attribute string in memory.
-	//This when we print the shminfo, we'll see that all of the fields have been filled with 0x41
+	//Thus when we print the shminfo, we'll see that all of the fields have been filled with 0x41
 	print_shminfo(shminfo_fd, "After overwrite");
 
 	return 0;
