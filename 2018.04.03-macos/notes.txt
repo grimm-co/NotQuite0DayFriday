@@ -1,9 +1,9 @@
-Heap overflow in necp_client_action syscall
+Heap overflow in the necp_client_action syscall
 
 Overview:
-The following is a write-up of a heap overflow bug found while fuzzing the macOS
-necp_client_action syscall.  The necp_client_action syscall is part of the
-Network Extension Control Policy kernel subsystem.
+The following is a write-up of a heap overflow vulnerability found while fuzzing
+the macOS necp_client_action syscall.  The necp_client_action syscall is part of
+the Network Extension Control Policy kernel subsystem.
 
 Affected Versions:
 XNU kernel versions 4570.1.46 and later until 4570.51.1
@@ -16,8 +16,8 @@ $ clang poc.c -o poc
 $ ./poc
 $ clang leak.c -o leak
 $ ./leak
-$ clang overwrite.c -o overwrite
-$ ./overwrite
+$ clang uaf.c -o uaf
+$ ./uaf
 
 Triage:
 While investigating the NECP subsystem during the implementation of a syscall
@@ -182,7 +182,7 @@ Exploit Development:
 Unfortunately, we were unable to finish our exploit prior to the vulnerability
 being fixed.  This section will describe our initial exploitation development.
 The proof of concept for this exploit development is contained in the included
-overwrite.c file.  This proof of concept is not-deterministic and may require
+uaf.c file.  This proof of concept is not-deterministic and may require
 a few runs to execute properly.
 
 Due to the design of the XNU kernel heap, it is not possible to overflow into
