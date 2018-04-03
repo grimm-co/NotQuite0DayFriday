@@ -231,5 +231,13 @@ creates a necp attribute string immediately after.  Once the pshminfo's
 reference counter hits 0, it will be freed, and the next attribute string will
 be placed on top of it.  As we still maintain other references to the SHM
 region, we will have causes a use after free condition on the pshminfo
-structure.
+structure.  To illustrate the use after free, our proof of concept prints out
+the information about the SHM region obtained via the proc_info syscall.
+
+The next steps in our exploitation plan was to setup the necp attribute string
+such that the remaining references to the SHM region could cause another use
+after free.  In the freed memory, a uio struct would be allocated which we could
+control and read via the necp attribute string also occupying that region of
+memory.  With the ability to read and modify a uio struct, the exploit should be
+able to achieve arbitrary read/write of kernel memory.
 
