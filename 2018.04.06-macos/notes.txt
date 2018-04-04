@@ -247,3 +247,7 @@ control and read via the NECP attribute string also occupying that region of
 memory.  With the ability to read and modify a uio struct, the exploit should be
 able to achieve arbitrary read/write of kernel memory.
 
+Timeline:
+10/24/17 - Bug discovered and began bug triage to understand the bug's impact.
+3/29/18  - Apple release macOS 10.13.4 with the patch included.
+4/6/18   - Finished bug triage and analysis.  Write-up made public.
