@@ -1,10 +1,15 @@
+Infinite loop parsing double-encrypted PGP messages with Enigmail
+
 Overview:
 Viewing a recursively-encrypted email with Enigmail causes Thunderbird to crash or hang.
 
 Versions affected and results:
-52.7.0 for MacOS, message viewed in preview pane: Thunderbird crashes
-52.7.0 for MacOS, message opened with "Open Saved Message": Thunderbird hangs
-52.7.0 for Linux (Ubuntu x64): Thunderbird hangs for a while, then opens an "Unresponsive script" warning.
+Thunderbird 52.7.0/Enigmail 2.0.2 on macOS High Sierra, message viewed in preview pane: Thunderbird crashes
+Thunderbird 52.7.0/Enigmail 2.0.2 on macOS High Sierra, message opened with "Open Saved Message": Thunderbird hangs
+Thunderbird 52.7.0/Enigmail 2.0.2 on Ubuntu 16.04 64-bit: Thunderbird hangs for a while, then opens an "Unresponsive script" warning.
+
+Discovery Environment:
+Thunderbird 52.7.0/Enigmail 2.0.2 on macOS High Sierra
 
 Exercising:
 Set up Thunderbird and Enigmail with a private key installed for some profile
@@ -19,8 +24,8 @@ message. When decrypted, this PGP message must also be a multipart/encrypted
 message containing a PGP message. The contents of this inner PGP message can be
 anything. The enclosed createcrash.sh script generates a minimal test case.
 
-Crash on MacOS investigation:
-On MacOS, we did not have the debug symbols to go along with our Thunderbird
+Crash on macOS investigation:
+On macOS, we did not have the debug symbols to go along with our Thunderbird
 binary, so we needed to work with the disassembly. Attaching to the process
 with lldb, we can see that the crash occurs at:
 * thread #1, queue = 'com.apple.main-thread', stop reason = EXC_BAD_ACCESS (code=1, address=0x0)
@@ -41,8 +46,8 @@ It seems most likely that the crash is on line 659 and `target` is a null
 pointer. However, this function has no obvious connection to decryption, so we
 move on to the other behavior in case that is more revealing.
 
-Hang on Linux and MacOS investigation:
-On MacOS, if you open the message from a .eml file rather than viewing it in
+Hang on Linux and macOS investigation:
+On macOS, if you open the message from a .eml file rather than viewing it in
 the preview pane, Thunderbird just hangs rather than crashing. On Linux, it exhibits
 this same behavior regardless of how the message is opened, but after a while
 displays a box with the message: "A script on this page may be busy, or it may
@@ -106,4 +111,5 @@ intending to make this recursive call to parse the inner encrypted body, but is
 instead repeatedly parsing the outer encrypted body?
 
 Timeline
-2018.04.11 - Crash discovered, began triage
+2018.04.11 - Crash discovered, began investigation to understand impact.
+2018.04.16 - Finished bug triage and analysis.
