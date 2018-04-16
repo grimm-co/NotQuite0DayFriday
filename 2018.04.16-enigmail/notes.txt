@@ -1,0 +1,109 @@
+Overview:
+Viewing a recursively-encrypted email with Enigmail causes Thunderbird to crash or hang.
+
+Versions affected and results:
+52.7.0 for MacOS, message viewed in preview pane: Thunderbird crashes
+52.7.0 for MacOS, message opened with "Open Saved Message": Thunderbird hangs
+52.7.0 for Linux (Ubuntu x64): Thunderbird hangs for a while, then opens an "Unresponsive script" warning.
+
+Exercising:
+Set up Thunderbird and Enigmail with a private key installed for some profile
+(In the following step, replace user@example.com with that user's email address)
+$ ./createcrash.sh test user@example.com > crash.eml
+Open crash.eml in Thunderbird. Unlock the user's private key when prompted. Wait for crash/hang.
+
+Description of crashing input:
+An email will cause the crash/hang if it is doubly OpenPGP/MIME encrypted. That
+is, the outer message should be a multipart/encrypted message containing an PGP
+message. When decrypted, this PGP message must also be a multipart/encrypted
+message containing a PGP message. The contents of this inner PGP message can be
+anything. The enclosed createcrash.sh script generates a minimal test case.
+
+Crash on MacOS investigation:
+On MacOS, we did not have the debug symbols to go along with our Thunderbird
+binary, so we needed to work with the disassembly. Attaching to the process
+with lldb, we can see that the crash occurs at:
+* thread #1, queue = 'com.apple.main-thread', stop reason = EXC_BAD_ACCESS (code=1, address=0x0)
+    frame #0: 0x0000000105066ad7 XUL`___lldb_unnamed_symbol51710$$XUL + 1063
+XUL`___lldb_unnamed_symbol51710$$XUL:
+->  0x105066ad7 <+1063>: movq   (%r14), %rax
+    0x105066ada <+1066>: movq   0x20(%rax), %rbp
+    0x105066ade <+1070>: movq   (%rbx), %rax
+    0x105066ae1 <+1073>: movq   %rbx, %rdi
+Target 0: (thunderbird) stopped.
+
+This address is 0xb8bad7 in the XUL library. Looking at a disassembly and
+matching strings, the beginning of this function looks like the beginning of
+Service::OpenAsyncDatabase in mozStorageService.cpp. We were able to narrow the
+crashing instruction down to lines 649-659 of this function:
+https://dxr.mozilla.org/comm-central/rev/a79d460bf2a33fd79c6646236f9c4df78e66e7b7/mozilla/storage/mozStorageService.cpp#649-659
+It seems most likely that the crash is on line 659 and `target` is a null
+pointer. However, this function has no obvious connection to decryption, so we
+move on to the other behavior in case that is more revealing.
+
+Hang on Linux and MacOS investigation:
+On MacOS, if you open the message from a .eml file rather than viewing it in
+the preview pane, Thunderbird just hangs rather than crashing. On Linux, it exhibits
+this same behavior regardless of how the message is opened, but after a while
+displays a box with the message: "A script on this page may be busy, or it may
+have stopped responding. You can stop the script now, or you can continue to
+see if the script will complete. Script:
+chrome://enigmail/content/enigmailMsgHdrViewOverlay.js:1342"
+
+The stack traces are similar on the two platforms, so we will include only the Linux one which is more legible due to debug symbols:
+
+#1  0x00007f868ca78cc0 in MimeEncrypted_emit_buffered_child (obj=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:553
+#2  MimeEncrypted_parse_eof (obj=0x7f860d0e7040, abort_p=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:231
+#3  0x00007f868ca78cc0 in MimeEncrypted_emit_buffered_child (obj=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:553
+#4  MimeEncrypted_parse_eof (obj=0x7f860d0e6e00, abort_p=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:231
+#5  0x00007f868ca78cc0 in MimeEncrypted_emit_buffered_child (obj=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:553
+#6  MimeEncrypted_parse_eof (obj=0x7f860d0e6bc0, abort_p=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:231
+#7  0x00007f868ca78cc0 in MimeEncrypted_emit_buffered_child (obj=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:553
+#8  MimeEncrypted_parse_eof (obj=0x7f860d0e6980, abort_p=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:231
+#9  0x00007f868ca78cc0 in MimeEncrypted_emit_buffered_child (obj=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:553
+#10 MimeEncrypted_parse_eof (obj=0x7f860d0e6740, abort_p=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:231
+... thousands of frames ...
+#23228 MimeEncrypted_parse_eof (obj=0x7f86629523a0, abort_p=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecryp.cpp:231
+#23229 0x00007f868ca785b5 in MimeContainer_parse_eof (object=0x7f8662d6ef80, abort_p=false) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimecont.cpp:108
+#23230 0x00007f868ca8c14a in MimeMessage_parse_eof (obj=0x7f8662d6ef80, abort_p=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimemsg.cpp:565
+#23231 0x00007f868ca895a4 in mime_display_stream_complete (stream=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/mimemoz2.cpp:1027
+#23232 0x00007f868ca98860 in nsStreamConverter::OnStopRequest (this=0x7f8663897400, request=0x7f8665043188, ctxt=0x7f8664c83bc0, status=nsresult::NS_OK)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/nsStreamConverter.cpp:1055
+#23233 0x00007f868d10287c in nsDocumentOpenInfo::OnStopRequest (this=0x7f866388bb00, request=0x7f8665043188, aCtxt=0x7f8664c83bc0, aStatus=nsresult::NS_OK)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/uriloader/base/nsURILoader.cpp:338
+#23234 0x00007f868c938890 in nsMsgProtocol::OnStopRequest (this=this@entry=0x7f8665043180, request=request@entry=0x7f8663888f20, ctxt=ctxt@entry=0x7f8664c83bc0, 
+    aStatus=aStatus@entry=nsresult::NS_OK) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/base/util/nsMsgProtocol.cpp:385
+#23235 0x00007f868ca513d0 in nsMailboxProtocol::OnStopRequest (this=0x7f8665043180, request=0x7f8663888f20, ctxt=0x7f8664c83bc0, aStatus=nsresult::NS_OK)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/local/src/nsMailboxProtocol.cpp:382
+#23236 0x00007f868cb94d4d in nsInputStreamPump::OnStateStop (this=0x7f8663888f20) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/netwerk/base/nsInputStreamPump.cpp:714
+#23237 0x00007f868cb98cc6 in nsInputStreamPump::OnInputStreamReady (this=0x7f8663888f20, stream=<optimized out>)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/netwerk/base/nsInputStreamPump.cpp:433
+#23238 0x00007f868cb1e7aa in nsInputStreamReadyEvent::Run (this=0x7f8662d4c180) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/xpcom/io/nsStreamUtils.cpp:95
+#23239 0x00007f868cb3434f in nsThread::ProcessNextEvent (this=0x7f869bc579d0, aMayWait=<optimized out>, aResult=0x7fff99d1ee67)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/xpcom/threads/nsThread.cpp:1216
+#23240 0x00007f868cb4ca27 in NS_ProcessNextEvent (aThread=<optimized out>, aThread@entry=0x7f869bc579d0, aMayWait=aMayWait@entry=false)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/xpcom/glue/nsThreadUtils.cpp:361
+#23241 0x00007f868ce0c4f4 in mozilla::ipc::MessagePump::Run (this=0x7f8689c343c0, aDelegate=0x7f869bcb2690)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/ipc/glue/MessagePump.cpp:96
+#23242 0x00007f868cdf7258 in MessageLoop::RunHandler (this=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/ipc/chromium/src/base/message_loop.cc:225
+#23243 MessageLoop::Run (this=<optimized out>) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/ipc/chromium/src/base/message_loop.cc:205
+#23244 0x00007f868de6279b in nsBaseAppShell::Run (this=0x7f868042ca00) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/widget/nsBaseAppShell.cpp:156
+#23245 0x00007f868e4b1173 in nsAppStartup::Run (this=0x7f8680424060) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/toolkit/components/startup/nsAppStartup.cpp:283
+#23246 0x00007f868e501772 in XREMain::XRE_mainRun (this=this@entry=0x7fff99d1f110) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/toolkit/xre/nsAppRunner.cpp:4488
+#23247 0x00007f868e501a42 in XREMain::XRE_main (this=this@entry=0x7fff99d1f110, argc=argc@entry=1, argv=argv@entry=0x7fff99d20528, aAppData=aAppData@entry=0x7fff99d1f348)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/toolkit/xre/nsAppRunner.cpp:4621
+#23248 0x00007f868e501cb0 in XRE_main (argc=1, argv=0x7fff99d20528, aAppData=0x7fff99d1f348, aFlags=<optimized out>)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/toolkit/xre/nsAppRunner.cpp:4712
+#23249 0x000055e301ac0be3 in do_main (argc=1, argv=0x7fff99d20528, envp=<optimized out>, xreDirectory=0x7f869bc50a80)
+    at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mail/app/nsMailApp.cpp:245
+#23250 0x000055e301ac01b0 in main (argc=1, argv=0x7fff99d20528, envp=0x7fff99d20538) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mail/app/nsMailApp.cpp:378
+
+It appears that when MimeEncrypted_emit_buffered_child calls
+`status = body->clazz->parse_eof(body, false);`
+(https://dxr.mozilla.org/comm-central/rev/80fab3583c0e563cfab67ad53723db6588df1897/mailnews/mime/src/mimecryp.cpp#552),
+it is recursively calling MimeEncrypted_parse_eof endlessly. Perhaps it is
+intending to make this recursive call to parse the inner encrypted body, but is
+instead repeatedly parsing the outer encrypted body?
+
+Timeline
+2018.04.11 - Crash discovered, began triage
