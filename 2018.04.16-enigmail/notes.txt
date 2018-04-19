@@ -76,7 +76,7 @@ The stack traces are similar on the two platforms, so we will include only the L
     at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/mime/src/nsStreamConverter.cpp:1055
 #23233 0x00007f868d10287c in nsDocumentOpenInfo::OnStopRequest (this=0x7f866388bb00, request=0x7f8665043188, aCtxt=0x7f8664c83bc0, aStatus=nsresult::NS_OK)
     at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mozilla/uriloader/base/nsURILoader.cpp:338
-#23234 0x00007f868c938890 in nsMsgProtocol::OnStopRequest (this=this@entry=0x7f8665043180, request=request@entry=0x7f8663888f20, ctxt=ctxt@entry=0x7f8664c83bc0, 
+#23234 0x00007f868c938890 in nsMsgProtocol::OnStopRequest (this=this@entry=0x7f8665043180, request=request@entry=0x7f8663888f20, ctxt=ctxt@entry=0x7f8664c83bc0,
     aStatus=aStatus@entry=nsresult::NS_OK) at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/base/util/nsMsgProtocol.cpp:385
 #23235 0x00007f868ca513d0 in nsMailboxProtocol::OnStopRequest (this=0x7f8665043180, request=0x7f8663888f20, ctxt=0x7f8664c83bc0, aStatus=nsresult::NS_OK)
     at /build/thunderbird-Iehmay/thunderbird-52.7.0+build1/mailnews/local/src/nsMailboxProtocol.cpp:382
@@ -110,6 +110,15 @@ it is recursively calling MimeEncrypted_parse_eof endlessly. Perhaps it is
 intending to make this recursive call to parse the inner encrypted body, but is
 instead repeatedly parsing the outer encrypted body?
 
-Timeline
+Security Impact:
+This bug allows a malicious sender to cause a denial of service in the
+receiver's Thunderbird email client. Depending on how the email is opened and
+the recipient's operating system, the client could crash or freeze. However,
+the program can easily be quit and reopened to resume usage. The malicious
+message can also be deleted from the right-click menu without triggering the
+DoS. So, this bug does not appear to be extremely dangerous from a security
+perspective.
+
+Timeline:
 2018.04.11 - Crash discovered, began investigation to understand impact.
 2018.04.16 - Finished bug triage and analysis.
