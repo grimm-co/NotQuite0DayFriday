@@ -124,3 +124,6 @@ Timeline:
 2018.04.16 - Finished bug triage and analysis.
 2018.04.19 - Wrote everything up and reported to security@mozilla.org and
              patrick@enigmail.net
+2018.04.19 - Bug opened on bugzilla https://bugzilla.mozilla.org/show_bug.cgi?id=1455410
+2018.04.21 - Enigmail author triaged and fixed the bug in the 2.0-branch and
+             confirmed that it will be in the next Enigmail release.
