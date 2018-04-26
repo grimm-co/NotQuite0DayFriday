@@ -1,0 +1,144 @@
+ccd2cue bugs
+
+Overview:
+The following is a write-up of 2 bugs found while fuzzing ccd2cue.
+
+Bug 1: Heap Corruption
+Bug 2: Integer Overflow leading to Heap Corruption
+Bug 3: Integer Overflow leading to Heap Corruption
+
+Discovery Environment:
+Ubuntu 16.04 LTS 32-bit
+ccd2cue version 0.5
+
+Exercising:
+Bug 1 and 2: ccd2cue -o /dev/null toc_and_make_reference_name.ccd
+Bug 3:       ccd2cue -o /dev/null session.ccd
+
+Description:
+
+Bug 1:
+In src/file.c, the function make_reference_name can be made to write a NULL
+character to an invalid heap pointer.  In the code below, str is a heap char
+pointer.  The str pointer is valid at the beginning of this code, and thus so
+is str_end.  However, after the realloc call, str may be moved if realloc cannot
+expand the heap chunk that str is in.  However, str_end is not updated, so it
+will point to a now freed heap chunk when the NULL character is written.
+
+  str_end = strrchr (str, '.');
+
+  /* If you have found the referred dot, 'STR' has an extension, thus
+     free the space occupied by it and mark the new end of 'STR': the
+     location of that last dot. */
+  if (str_end != NULL)
+  {
+    str = realloc (str, str_end - str + 1);
+    *str_end = '\0';
+  }
+
+Impact:
+While this bug will cause heap corruption, the only value that can be written is
+a single NULL character.  Further, the vulnerable function is only called at the
+very beginning of the program before any parsing of the ccd file has taken
+place. Thus, there wouldn't be any chance for heap grooming before the
+vulnerable code is run.  As such, exploitation of this bug would be extremely
+difficult, if possible at all.
+
+Further, the value of str in the code above is taken from a command line option
+that specifies the filename. In most cases where an attacker can control the
+options to a program and the filename of a file, the attacker will already have
+the ability to run arbitrary commands and will not need to exploit this bug.
+
+Bug 2:
+While parsing the ccd file, ccd2cue uses sscanf to grab the number of
+TocEntries in the ccd header.  However, the TocEntries value is not checked for
+a realistic value before being sent to xmalloc.  The code listing below from
+src/ccd.c shows the code which is responsible for this bug.
+
+  if (sscanf (line, " TocEntries = %d ", &TocEntries) == 1
+  && TocEntries > 0
+  && ccd->Disc.TocEntries == 0)
+  {
+    /* Consider the indicated number of "Toc" sections as an
+       authoritative reference. */
+    ccd->Disc.TocEntries = TocEntries;
+    /* Allocate the necessary space to accommodate all "Toc"
+       sections. */
+    ccd->Entry = xmalloc (sizeof (*ccd->Entry) * (ccd->Disc.TocEntries + 1));
+  }
+
+Our fuzzer found this issue on a 32-bit build, but we could not reproduce it on
+a 64-bit build.  This is due to 2 differences between the 32-bit and 64-bit
+builds of ccd2cue.  First, sscanf returns different results when parsing an
+integer that is too large on 32-bit and 64-bit Linux.  On 32-bit Linux, the
+resulting integer is set to 0x7fffffff (2147483647), while 64-bit Linux sets the
+resulting integer to 0xffffffff (-1).  Thus, on 64-bit Linux the TocEntries
+check is not passed, ccd->Disc.TocEntries is never set and the TocEntries are
+never parsed.
+
+However on 32-bit Linux, TocEntries is set to 0x7fffffff (2147483647) which
+passes the TocEntries check. The calculation of the size for xmalloc on 32-bit
+is done with the following assembly (where ccd->Disc.TocEntries is eax).
+
+0x804a379 <stream2ccd+673>:   add    eax, 1
+0x804a37c <stream2ccd+676>:   shl    eax, 3
+0x804a37f <stream2ccd+679>:   lea    edx, [eax*8]
+
+However, if the starting value of eax is 0x7fffffff, then at 0x804a379 eax
+becomes 0x80000000.  Then shifting left 3 times at 0x804a37c causes eax to
+become 0.  Thus, the resulting call to xmalloc has a size of 0.  When xmalloc
+(and malloc) on Linux are given 0 as the size, they return a "unique pointer
+value that can later be successfully passed to free()".  However, because this
+memory should not be written to, heap corruption occurs later on in ccd2cue when
+the TocEntries are parsed and stored at the returned pointer.
+
+Unlike 32-bit, 64-bit does not have this problem even if the value 2147483647 is
+provided as the number of TocEntries. As shown below, the left shift takes place
+in a larger register than the sscanf read size, and thus the overflow cannot
+happen.
+
+On 64-bit:
+0x402d46 <stream2ccd+794>:   add    eax,0x1
+0x402d49 <stream2ccd+797>:   cdqe
+0x402d4b <stream2ccd+799>:   shl    rax,0x3
+0x402d4f <stream2ccd+803>:   lea    rdx,[rax*8+0x0]
+
+Impact:
+This bug allows for overwriting of heap data with attacker controlled contents.
+Further, this bug occurs during the parsing loop, and thus the attacker has the
+chance to groom the heap section by reading other data sections before
+triggering this bug.  As this bug is caused by a malformed file, an attacker
+would not be able to modify the addresses needed for an exploit during
+execution.  However, the default build options of ccd2cue produce a non-ASLR
+binary.  While this bug would take some work to make a reliable exploit, it is
+most likely exploitable.
+
+Bug 3:
+Similar to Bug 2, ccd2cue does not prevent an integer overflow while parsing the
+ccd header values.  In this case, ccd2cue does not check the value of the
+Sessions header value prior to a call to xmalloc.  This code listing below shows
+the vulnerable code:
+
+  if (sscanf (line, " Sessions = %d ", &Sessions) == 1
+  && Sessions > 0
+  && ccd->Disc.Sessions == 0)
+  {
+    /* Consider the indicated number of "Session" sections as an
+       authoritative reference. */
+    ccd->Disc.Sessions = Sessions;
+    /* Allocate the necessary space to accommodate all "Session"
+       sections. */
+    ccd->Session = xmalloc (sizeof (*ccd->Session) * (ccd->Disc.Sessions + 1));
+  }
+
+Impact:
+As this bug is almost identical to Bug 2, it will have the same impact as Bug 2.
+
+
+
+Timeline:
+2017.08.25 - Found initial crashes, put triage on the back burner
+2018.02.20 - Remembered this project when cleaning up old files, started triage
+2018.03.02 - Initial triage done
+2018.03.12 - Bug reported to ccd2cue@gnu.org
+2018.04.26 - Public disclosure
