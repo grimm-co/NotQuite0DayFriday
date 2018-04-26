@@ -136,4 +136,9 @@ As this bug is almost identical to Bug 2, it will have the same impact as Bug 2.
 
 
 
-
+Timeline:
+2017.08.25 - Found initial crashes, put triage on the back burner
+2018.02.20 - Remembered this project when cleaning up old files, started triage
+2018.03.02 - Initial triage done
+2018.03.12 - Bug reported to ccd2cue@gnu.org
+2018.04.26 - Public disclosure
