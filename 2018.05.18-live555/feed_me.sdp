@@ -1,0 +1,4 @@
+v=0
+c=IN IP4 192.168.56.1
+m=audio 1234 RTP/AVP 111
+a=rtpmap:111 AMR-WB/8000
