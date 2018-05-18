@@ -1,0 +1,547 @@
+Heap Overflow in libLiveMedia Handling of AMR Audio RTP Streams
+
+Overview
+========
+A logic error in the computation of a buffer size leads to a heap overflow when
+receiving a specially crafted RTP audio stream. Using heap grooming and
+manipulation of heap metadata, this overflow can be used to gain control of
+the instruction pointer. However, due to limitations on the addresses that could
+be jumped to, this did not lead to arbitrary code execution.
+
+Affected Versions
+-----------------
+According to Debian repository logs,[1] the code that causes this bug has been
+present in all versions of libLiveMedia since at least the 2006.03.17 version.
+The rest of the analysis in this post was tested only on the 2016.02.09-1
+Ubuntu package.
+
+Discovery Environment
+---------------------
+Ubuntu 64-bit, VLC version 2.2.2, liblivemedia version 2016.02.09-1
+
+
+Exercising
+==========
+Instructions tested on Ubuntu 16.04:
+$ sudo apt install vlc virtualenv
+$ virtualenv -p python3 venv
+$ source venv/bin/activate
+$ pip install bitstruct
+
+In a different terminal, run:
+$ vlc -I dummy -v feed_me_wb.sdp
+
+Then in the original (venv) terminal, run:
+$ ./exploit.py
+
+
+Understanding the Bug
+=====================
+The bug is a heap overflow in unpackBandwidthEfficientData in
+AMRAudioRTPSource.cpp. This is a module that accepts incoming streams in the
+AMR audio format, encapsulated in RTP packets. The purpose of this function is
+to convert data from the "bandwidth-efficient" format of AMR audio to
+"octet-aligned". It allocates a temporary buffer to hold the converted data:
+
+  unsigned const toBufferSize = 2*packet->dataSize(); // conservatively large
+  unsigned char* toBuffer = new unsigned char[toBufferSize];
+
+The value of packet->dataSize() is the number of bytes in the UDP packet
+received, less 12 for the initial RTP header. However, the packet data can
+contain values that will make this toBufferSize insufficient. There are two
+ways that writes can go out of bounds. One is that the packet begins with a
+table of contents which consists of 6-bit fields, which it will copy to the
+buffer without regard to buffer size until it encounters one with the top bit
+unset:
+
+  while (1) {
+    unsigned toc = fromBV.getBits(6);
+    toBuffer[toCount++] = toc << 2;
+
+    if ((toc&0x20) == 0) break; // the F bit is 0
+  }
+
+This allows overwriting an unlimited number of bytes, but in each byte bits 0
+and 1 must be unset and bit 7 must be set. This could be useful for
+positioning, but doesn't give us a lot of control for overwriting things.
+
+The second possible overwrite comes from the fact that the middle 4 bits of
+each ToC entry encode the frame type, and each frame type expects a certain
+number of bits of input. The program will copy those bits from the packet's
+buffer into toBuffer, even if the total number of bits copied exceeds the size
+of toBuffer:
+
+	unsigned char tocByte = toBuffer[i];
+	unsigned char const FT = (tocByte&0x78) >> 3;
+	unsigned short frameSizeBits
+		= isWideband ? frameBitsFromFTWideband[FT] : frameBitsFromFT[FT];
+	unsigned short frameSizeBytes = (frameSizeBits+7)/8;
+
+	shiftBits(&toBuffer[toCount], 0, // to
+			packet->data(), fromBV.curBitIndex(), // from
+			frameSizeBits // num bits
+			);
+
+By specifying AMR-WB in the SDP file, we can cause isWideband to be set,
+increasing the ease of overflow by allowing us to use the larger
+frameBitsFromFTWideband values:
+
+	static unsigned short const frameBitsFromFTWideband[16] = {
+		132, 177, 253, 285,
+		317, 365, 397, 461,
+		477, 40, 0, 0,
+		0, 0, 0, 0
+	};
+
+
+Now that we can see there is an overflow, let's get into some details about what
+it can do.
+
+What can we control about the amount of data written?
+-----------------------------------------------------
+The number of bits written by the shiftBits call is frameBitsFromFTWideband[FT],
+but the allocated size of toBuffer is 2*(number of bytes in UDP packet - 12).
+So, by selecting the FT value in the data sent, as well as the total number of
+bytes sent, the amount of data that overflows can be controlled. Further,
+shiftBits is called once for each entry in the ToC, allowing the overwrite to be
+extended and providing more control over the exact amount overwritten.
+
+For example, a ToC containing frame types 0 and 1 would copy the next 132 packet
+bits into toBuffer, skip the next 4 bits of toBuffer (until a byte
+boundary), then copy the next 177 packet bits into toBuffer and skip the
+next 7 bits. In total, 17 + 23 = 40 bytes of toBuffer would be affected,
+but not all bits would be overwritten. The following diagram shows how the
+packet bits are expanded, with 'x' representing the bits that are not modified
+by the copy.
+
+packet:   |ToC| 132 bits |  177 bits   |
+
+toBuffer: |ToC| 132 bits |x| 177 bits    |x|
+              \            /\              /
+               \-17 bytes-/  \--23 bytes--/
+
+What can we control about the data written by the overflow?
+-----------------------------------------------------------
+The next question is, what are we overflowing *with*? The fromBasePtr argument
+of shiftBits is set to packet->data(), which we know contains all but the first
+12 bytes of the data sent in the packet. But if we're copying more than toBuffer
+can hold, we are also copying more than what we sent. So where does the
+remaining content come from?
+
+We can see in the definition of BufferedPacket data() is defined as:
+
+	unsigned char* data() const { return &fBuf[fHead]; }
+
+Where does fBuf point? The constructor of the BufferedPacket object passed
+into unpackBandwidthEfficientData allocates fBuf as follows:
+
+	fBuf(new unsigned char[MAX_PACKET_SIZE])
+
+So, fBuf is a heap-allocated buffer, always of size MAX_PACKET_SIZE, which is
+65536.
+
+New BufferedPackets (and thus new fBufs) are created by
+ReorderingPacketBuffer::getFreePacket whenever a new packet is received and a
+saved BufferedPacket struct is not available. And after a packet's data has been
+processed, MultiFramedRTPSource::doGetNextFrame1 calls
+ReorderingPacketBuffer::releaseUsedPacket, which frees the packet and its fBuf.
+Conveniently, there is no code to erase the contents of the fBuf when a packet
+gets freed, and there are no other frequently-allocated objects that are as big
+as the 65536-byte fBuf, so if there are freed fBufs available on the heap, one
+of them will be returned for a new packet's fBuf allocation. This means that the
+data copied in unpackBandwidthEfficientData comes either from the current UDP
+packet, or from a previous packet that used that fBuf. The overflow source data
+is thus attacker-controlled.
+
+We can test this by sending a large packet followed by a small one with ToC set
+to do the overwrite.
+When processing the first packet, we fill toBuffer with lots of data:
+pwndbg> x/60xb toBuffer
+0x7fffccc542d0: 0xf0    0x44    0x01    0x85    0x85    0x85    0x85    0x85
+0x7fffccc542d8: 0x85    0x85    0x85    0x85    0x85    0x85    0x85    0x85
+When processing the second packet, that data is still in the buffer:
+pwndbg> x/60xb &packet->fBuf[12]
+0x7fffccc57d9c: 0xf4    0x40    0x01    0x85    0x85    0x85    0x85    0x85
+0x7fffccc57da4: 0x85    0x85    0x85    0x85    0x85    0x85    0x85    0x85
+"0xf4 0x40" is the data sent in this packet. 0x01 and beyond comes from the
+first packet. As long as the overflowing packet is using a previously-used fBuf
+(which it will as long as one is available), we can set that fBuf's data to
+control the data that gets written by the overflow.
+
+What can we control about the destination of the overwrite?
+----------------------------------------------------------
+toBuffer is heap allocated immediately before use, and its size is
+controlled by our input packet. So if we can control the next item on the heap
+freelist for the requested size of toBuffer, we can control the target of the
+overwrite.  An easy way to do this is to make toBuffer the same chunk size as an
+AMRBufferedPacket object. On completing the processing of a packet, the
+corresponding AMRBufferedPacket will be freed. Then during the next packet's
+processing, toBuffer will receive the chunk that was previously occupied by the
+AMRBufferedPacket.
+
+
+Using the Overflow
+==================
+So we have the ability to do a fairly controlled overflow to a location that we
+can somewhat control with careful heap management. Since we are limited to
+overwrites in the heap, which is not executable, in order to control the
+execution we will need to gain control of RIP by modifying a pointer that
+affects control flow. Most likely, this would be:
+- An object that contains an explicit function pointer - a call to this pointer
+  would go wherever we set the pointer to go
+- An object with virtual methods - these objects contain a pointer to their
+  type's vtable, which is itself a (read-only) list of pointers to all the
+  object's virtual methods. If we point the vtable pointer to an
+  attacker-controlled location, the values there will be used instead of the
+  real method addresses.
+
+Additionally, it must be possible to force the target object to be allocated
+adjacent to toBuffer. This rules out any objects that are created once when the
+program starts or the file is opened and never reallocated afterwards. The best
+candidates are objects that are allocated and freed as packets are received and
+processed. Two objects that can be controlled in this manner are:
+- AMRBufferedPacket. Whenever a packet is received, one of these objects is
+  created by ReorderingPacketBuffer::getFreePacket to keep track of it. If the
+  packet has the sequence number the ReorderingPacketBuffer is expecting, it is
+  processed immediately and the AMRBufferedPacket is freed. However, if a
+  different sequence number is expected, the AMRBufferedPacket is retained in a
+  linked list. AMRBufferedPacket has a few virtual methods including the
+  destructor and getNextEnclosedFrameParameters().
+- RTPReceptionStats. Whenever a packet is received, statistics are collected by
+  calling RTPReceptionStatsDB::noteIncomingPacket. The packet contains a field
+  called SSRC, and these statistics are kept per-SSRC. So, whenever the current
+  packet has an SSRC field that has never been seen before, the
+  RTPReceptionStatsDB allocates a new RTPReceptionStats struct to keep track of
+  it. RTPReceptionStats has one virtual method, the destructor.
+
+First attempt: direct vptr overwrite
+------------------------------------
+Our goal is now to drop toBuffer (the buffer that will be overflowed) in before
+one of these other objects. As previously hinted at, we will do so by making
+toBuffer replace a just-freed AMRBufferedPacket that is located immediately
+before another AMRBufferedPacket which we want to overwrite. We will ensure
+that these packets are adjacent, then free the first one and overwrite the
+second, by manipulating the linked list of AMRBufferedPackets.
+
+First we initialize the expected sequence number in the ReorderingPacketBuffer
+by sending a packet with sequence number 30. The buffer will now look for
+packet number 31, meaning that any packets with greater sequence numbers will
+be queued.
+
+Next we initialize some packet buffers with the source data for the overflow.
+We do this by sending several packets numbered 32 up to 90, all containing the
+data we want to overwrite with.  As they get added to the queue a bunch of
+65536-byte fBuf buffers will be allocated, all containing the same data. Then
+we send packet 31 to make these all get processed and freed.
+
+Next we groom the heap. We send a bunch of high-numbered packets, which will
+remain allocated until the exploit is complete. The purpose of these is to
+consume any small free chunks on the heap, leaving only large chunks behind.
+After this, when AMRBufferedPackets are allocated, they will be placed in
+consecutive spaces carved from the smallest remaining chunk.
+
+Next we set up the overwrite by sending packets numbered 110 and 111. 110 will
+be freed to make room for toBuffer, 111 will be the one that gets overwritten.
+The contents of 110 are not very important, but 111 should contain ToC entries
+that will trigger the overflow. We'll discuss the specific ToC entries we chose
+below. Packet 111 must also be sized so that the heap allocation for its
+toBuffer is the same size as an AMRBufferedPacket. In our testing, a packet of
+59 bytes did the trick.
+
+Finally, we send packets with all the sequence numbers between 90 and 110.
+These will get processed and unblock 110 and 111 by doing so. (It will
+eventually use packets even if the intervening sequence numbers are missing,
+but it's simpler not to depend on that behavior.) When 111 is processed, it will
+allocate toBuffer in the space left by freeing 110, then overwrite its own vptr.
+Later in the processing, BufferedPacket::use will be called, which in turn calls
+the virtual method getNextEnclosedFrameParameters. This call will use the
+corrupted vptr, so it will go to a controlled location instead of the original
+code.
+
+So, here's the final sequence of packets:
+
+- 30                 (set initial sequence number)
+- 32, 33, ..., 90    (install source data for overwrite)
+- 31                 (process and free all the above)
+- 700, 701, ..., 740 (groom heap)
+- 110                (last freed chunk of correct size for toBuffer)
+- 111                (triggers overwrite, vptr gets overwritten)
+- 91, 92, ..., 109   (process the above)
+
+What frame types should we choose for the packet that triggers the overflow? An
+AMRBufferedPacket struct is 0x68 bytes long. Because of heap metadata, the heap
+chunk allocated to hold one is 0x70 bytes long, meaning that the offset between
+adjacent AMRBufferedPackets is 0x70. So, we choose to populate the ToC with
+frames of types 8 and 6, which write 0x3c and 0x32 bytes respectively. When the
+ToC is processed, the buffer will be filled as follows:
+
+       Byte 0x0: 4 packet bits
+  Bytes 0x1-0x2: Table of Contents
+ Bytes 0x3-0x3e: First frame (0x3c bytes)
+Bytes 0x3f-0x70: Second frame (0x32 bytes)
+
+Note that byte 0x70, the first byte of the next AMRBufferedPacket, has been
+overwritten. This represents the low-order byte of that object's vptr.
+
+Why not overwrite the whole vptr? We could increase the bits written to
+overwrite the whole vptr, but we need a safe value to set the vptr to. Unless
+we can leak an address, ASLR will make it difficult to guess one, and if we
+overwrite with an invalid address the program will segfault when it is
+dereferenced. Our best bet would be to use an address in the main VLC binary,
+which is not compiled position-independent. However, that binary is fairly
+minimal and we did not find anything useful in it to point to.
+
+The least significant 12 bits of the address are unaffected by ASLR, so
+overwriting the low-order byte allows us to move the vptr to a controlled
+location. But, that location must be within 0x100 of the object's original
+vtable, meaning we can only choose among a few other objects virtual methods.
+None of the functions accessible this way seemed to be very useful, so this
+method appeared to be a dead end.
+
+
+Overlapping objects to overwrite vptr
+-------------------------------------
+Our next approach is to use a pointer field from a different object to
+overwrite the vptr of the AMRBufferedPacket. We can do this by confusing the
+heap allocator so that two objects are allocated with an overlap. A technique
+that allows this is documented in a whitepaper by François Goichon[2]. Applying
+the Extending Allocated Chunks technique in that whitepaper to our situation,
+we can do the following:
+1. Begin with three allocated chunks:
+| toBuffer | packet1 | packet2 |
+2. Overflow toBuffer to modify the heap metadata before packet1, changing that
+chunk's size to encompass packet2 as well. So from the allocator's perspective,
+we now have:
+| toBuffer | combinedPacket    |
+3. Once processing of packet1 is complete, it will be freed. Now the
+combinedPacket chunk is listed on one of the allocator's free lists
+4. Allocate a chunk for a new object (newObject), receiving part of the
+combinedPacket free chunk. If combinedPacket is the smallest chunk large enough
+for the allocation, it will be split into the appropriate size. If newObject is
+bigger than packet1, the resulting allocation will include some bytes of
+packet2.
+5. Note that packet2 has not been processed yet. It is still linked into the
+ReorderingPacketBuffer's linked list of AMRBufferedPackets. Thus some bytes of
+packet2 (including its vptr) are now part of two different live objects.
+6. Using methods of newObject, write a pointer into the space occupied by
+packet2's vptr.
+7. Wait for packet2 to get processed, which will result in a virtual method
+call. This call will use the new vptr value to look up the method address.
+
+That is the general approach we will use. The tricky part is lining up
+newObject and packet2 so that newObject will write a useful pointer to the vptr
+slot of packet2. We will be actually be using another AMRBufferedPacket as our
+newObject, but inserting some differently-sized objects before allocating it in
+order to shift it to a useful place. Our allocation will look like the
+following, though at a larger scale.
+Starting configuration:
+| packetA | packetB | packetC | packetD | packetE |
+We let packets A, B, and C be processed, freeing them. For reasons we'll
+discuss later, the allocator will combine the adjacent chunks for A and B, but
+not yet C.
+| free              | free    | packetD | packetE |
+In processing packetD, we allocate toBuffer in the space left by packetC:
+| free              | toBuffer| packetD | packetE |
+We overflow toBuffer to combine packets D and E:
+| free              | toBuffer| combinedPacket    |
+toBuffer gets freed and combined with the previous chunk:
+| free                        | combinedPacket    |
+And so does combinedPacket (but remember that packetE is still live):
+| free                                   (packetE)|
+In the final attack we'll do this a bunch more times before overwriting heap
+metadata, producing a large free chunk. Now we will go back and allocate new
+objects in that space. If we send a new packet with a new SSRC, it will
+allocate an AMRBufferedPacket struct followed by an RTPReceptionStats and a
+TableEntry object. We do that a few times to change the alignment for future
+packets:
+| alignment objects               | free (packetE)|
+Now we allocate a packet so it overlaps and overwrites some of packetE:
+| alignment objects               | packetX |ketE |
+And finally we process packet E to take advantage of this overwrite. Phew!
+
+If the alignment worked correctly, the fBuf field of packetX (which points to a
+buffer of the raw packet data) will overlap the vptr field of packetE. Thus,
+this overwrite will replace the vptr with a pointer to attacker-controlled
+data, so we can fully control the addresses that will be jumped to by virtual
+method calls! Well, sometimes. In our testing, the alignment ends up correct
+roughly half of the time. Incorrect alignments generally cause the program to
+segfault.
+
+A couple of notes about this:
+1. How many alignment packets do we need? The chunks containing the
+RTPReceptionStats and TableEntry objects add up to 0xc0 bytes. The chunk for an
+AMRBufferedPacket takes up 0x70 bytes, so two packets take 0xe0 bytes. Since
+we're starting with a repeating pattern of 0x70-byte structures, we can use
+arithmetic mod 0x70 to figure out how many shifts we need. Because of the size
+difference, each set of alignment objects shifts the next packet left by 0x20.
+The fBuf field is at offset 0x10 in the AMRBufferedPacket, while vptr is at
+offset 0. So we want the overwriting packet (packetX) to be shifted 0x10 to the
+left with respect to the target packet (packetE). This is equivalent to a shift
+of 0x80, mod 0x70, so we can use four shifts of 0x20 (four SSRC changes) to get
+it into the right place.
+
+2. The reason packets A and B were combined, but packet C was not, is a quirky
+feature of the glibc allocator. The chunks that hold AMRBufferedPacket objects
+are small enough that when freed they are placed in the free lists called
+"smallbins." Smallbin chunks are not merged with adjacent chunks. However,
+certain conditions, including a free of more then 0x10000 bytes, cause the
+malloc_consolidate function to be called, which moves all smallbin chunks into
+the regular bins, making them get merged if adjacent to other free chunks.
+Conveniently, the size of the fBuf buffer that goes with each packet object is
+exactly 0x10000 bytes, so the freeing of packet C's fBuf causes packets A and B
+to be merged by malloc_consolidate. However, packet C's AMRBufferedPacket
+object is freed after the fBuf, so it remains on the smallbin and does not get
+merged.
+
+
+Leaking an address
+------------------
+The above technique allows us to specify an address that the program will jump
+to. However, as previously mentioned, most of the program is in various shared
+libraries which are loaded at random virtual addresses. This severely limits the
+code available to jump to. If we could learn an address in a library or even the
+address of a heap object we would have more control. But the exploit is a stream
+of packets sent to a remote host that is running the program. How can we get
+information back from the target machine?
+
+It turns out that the RTP streaming protocol has a companion protocol called
+RTCP that helps the streaming server keep track of statistics on the stream
+recipients. As the server sends stream packets, recipients send periodic RTCP
+report packets back with a summary of what they have received so far.
+Investigating the behavior of VLC/libLiveMedia on this stream, we found that it
+sends an RTCP packet to the server every 5 seconds. If we could influence a
+field of that packet, we would have a channel of information back from the
+target.
+
+The report packet is constructed by RTCPInstance::sendReport. Most of the fields
+in the packet are about the stream identity and come from objects created when
+the stream is opened, making them unlikely to be overwritable with our overflow.
+However, the fields added by RTCPInstance::enqueueCommonReportSuffix are an
+exception to this: in this method some bytes added to the packet from each
+RTPReceptionStats object in the RTPReceptionStatsDB. In the previous section we
+already inserted some RTPReceptionStats objects among our AMRBufferedPacket
+objects, so by using the same techniques we should be able to place one in the
+spot that will be overwritten (and indeed, we have a proof of concept that shows
+this is possible).
+
+However, this approach breaks down when we consider the fields in the
+RTPReceptionStats object that become part of the RTCP packet. The fields and
+offsets accessed are:
+- fSSRC (offset 0x8, 32 bits)
+- fNumPacketsReceivedSinceLastReset (offset 0xc, 32 bits)
+- fTotNumPacketsReceived (offset 0x10, 32 bits)
+- fBaseExtSeqNumReceieved (offset 0x20, 32 bits)
+- fLastResetExtSeqNumReceived (offset 0x24, 32 bits)
+- fHighestExtSeqNumReceived (offset 0x28, 32 bits)
+- fJitter (offset 0x38, 64 bits)
+- fLastReceivedSR_NTPmsw (offset 0x40, 32 bits)
+- fLastReceivedSR_NTPlsw (offset 0x44, 32 bits)
+- fLastReceivedSR_time (offset 0x48, 128 bits)
+
+Of these, only fSSRC and fHighestExtSeqNumReceived are sent verbatim, and
+neither of them is a full 64 bits. Furthermore, they are both at offsets equal
+to 8 mod 16. Objects are allocated aligned to 16-byte boundaries, so these
+fields will always have addresses like 0xXXXXXXX8. However, all the pointer
+fields of the objects we have readily available (vptr, fBuf, fNextPacket, and
+fOurSource in AMRBufferedPacket, and fNext in TableEntry) are at offsets equal
+to 0 mod 16, so their addresses will be like 0xXXXXXXX0. Because of the
+alignment, these pointers can never be the fields that overwrite fSSRC and
+fHighestExtSeqNumReceived.
+
+The fJitter field is a double, so it occupies 64 bits, but it is truncated to an
+unsigned int before sending. On the tested Linux system, all the pointers had
+addresses of the form 0x00007fXXXXXXXXXX, which interpreted as a double is a
+very tiny fraction. When truncated, it always produces 0.
+
+Another interesting approach is using the fLastReceivedSR_NTPmsw and lsw fields.
+Together these occupy 64 bits, and are 16-byte aligned, making them a potential
+target for overwriting with a pointer. However, before adding to the packet, the
+code takes the middle 32-bits of the value these represent:
+  unsigned LSR = ((NTPmsw&0xFFFF)<<16)|(NTPlsw>>16); // middle 32 bits
+This, too, could be ok, because the top 16 bits of an address are always 0, and
+only 4 of the bottom 16 bits are affected by ASLR, making them fairly guessable.
+However, because the x86 processor is little-endian, NTPmsw actually receives
+the low 32 bits of a 64-bit value written to that block, and NTPlsw receives the
+high 32 bits. Thus, the code above actually returns the *outside* 32 bits of our
+overwritten address, most of which we could have guessed anyway.
+
+Finally, all the other fields are combined with one another through arithmetic
+operations that prevent important bits from being reconstructed. So, it does not
+appear that any of the fields of RTPReceptionStats is suitable for overwriting
+with a pointer in order to leak that address to the server.
+
+
+Trying to ROP
+-------------
+Without an address leak, we can only safely use the code in the non-PIE VLC
+binary as a ROP target. We are further limited because the jump we control is a
+function call (so we have only limited control over the stack and registers at
+the time of the jump) and because it only happens once per packet processed, so
+we get only one controlled jump unless we corrupt multiple packets. If we want
+to do anything useful, we will probably need to control the stack contents so we
+can chain multiple jumps. So, we should look for ways to pivot the stack to an
+area we control.
+
+The only gadget in the VLC binary that looks like it would give us control of
+rsp is the following:
+
+  0x00000000004013ac : lea rsp, qword ptr [rbp - 0x18] ; pop rbx ; pop r12 ; pop r13 ; pop rbp ; ret
+
+This sets rsp to an offset from rbp. When the call occurs, rbp is supposed to
+point to the current position in the packet data (fBuf + fHead). However, as
+this packet has been overwritten by another AMRBufferedPacket object, those
+fields actually contain fNextPacket + fUseCount from the overwriting packet. The
+fUseCount is 0, so this is just that packet's fNextPacket pointer. This pointer
+points to the next packet on the ReorderingPacketBuffer queue if there is one,
+or NULL if not. And we know that it's possible to overwrite packet objects with
+the previously discussed techniques. So if we can get the overwriting packet's
+fNextPacket to point to an object, we might be able to corrupt that object to
+get a stack we can control.
+
+The order of events we'd like is something like this:
+1. Corrupt a packet on the heap to contain the stack we want for our ROP chain
+("stack packet")
+2. Corrupt another packet using the steps above to change its size and make the
+next packet ("target packet") appear freed
+3. Overwrite the target packet by sending the "overwriting packet," so that the
+target's vptr is the overwriting packet's fBuf and the target's fBuf is the
+overwriting packet's fNextPacket (which hopefully points to the stack packet).
+4. Process target packet so it makes a virtual method call to the ROP gadget,
+which pivots rsp to the stack packet.
+5. Now we can execute as many ROP gadgets as we want.
+
+This doesn't quite work, though. In order for the overwriting packet to point
+to the stack packet via its fNextPacket pointer, when that packet arrives the
+code must traverse the linked list of packets from lowest to highest sequence
+number in order to find the correct spot for the new packet. But if the target
+packet is in the part of the list that needs to be traversed, its fNextPacket
+link will have been corrupted by the overwriting packet, and this traversal
+will segfault. And the target packet must be between the start of the list and
+the stack packet, so that it will get processed before the stack packet (which
+is corrupted beyond recognition). Thus there is no sequence number we can give
+to the overwriting packet, such that its fNextPacket will be the stack packet,
+without requiring the traversal of the target packet's corrupted fNextPacket
+field.
+
+Conclusion
+----------
+Although this bug creates a fairly controllable heap overflow, limitations in
+the objects available to be allocated and overwritten, along with mitigation
+technologies like ASLR, prevented the creation of a reliable and effective
+exploit. However, it's always possible that there are more effective techniques
+out there that could lead to full code execution. In the mean time, the bug has
+served as an excellent opportunity to better understand the handling of
+streaming media and the behavior of the glibc heap.
+
+
+Timeline
+=======
+2017.08.25 - Crash discovered, investigation begins to determine the impact
+2018.04.25 - Reported to Live555 maintainer, VLC, Debian and Ubuntu
+2018.04.25 - Live555 maintainer responds in 2 hours with patch & new version
+
+
+References
+==========
+[1] https://salsa.debian.org/multimedia-team/liblivemedia/commit/512c93d263f56b98058d31dbbd6357c4d281d576
+[2] https://www.contextis.com/resources/white-papers/glibc-adventures-the-forgotten-chunks
