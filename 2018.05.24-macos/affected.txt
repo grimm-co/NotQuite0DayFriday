@@ -1,0 +1,2 @@
+This bug was first found in the XNU kernel versions 3789.1.32 and later. The XNU
+kernel version 3789.1.32 was first released in macOS 10.12.
