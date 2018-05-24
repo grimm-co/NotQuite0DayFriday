@@ -1,0 +1,75 @@
+Local denial of service in the necp_client_action syscall
+
+Overview:
+The following is a write-up of a local denial of service vulnerability found
+while fuzzing the macOS necp_client_action syscall.  The
+necp_client_action syscall is part of the Network Extension Control
+Policy (NECP) kernel subsystem.
+
+Affected Versions:
+XNU kernel versions 3789.1.32 and later
+
+Discovery Environment:
+macOS High Sierra inside VMware Fusion running a custom version of XNU 4570.1.46
+
+Exercising:
+$ clang poc.c -o poc
+$ ./poc
+
+Triage:
+While fuzzing the necp_client_action syscall, our fuzzer triggered a kernel
+panic in the necp_client_agent_use syscall.  This panic reported the following
+details:
+
+panic(cpu 1 caller 0xffffff800a7fdbac): "copyio(0x7ffee5e56730, 0xffffff9123a3d000, 67108865) - transfer too large"@/Users/test/delicious/kernel/xnu-4570.1.46/osfmk/x86_64/copyio.c:173
+Backtrace (CPU 1), Frame : Return Address
+0xffffff8014fe2890 : 0xffffff800a6ea2e6
+0xffffff8014fe28d0 : 0xffffff800a815284
+0xffffff8014fe2910 : 0xffffff800a807309
+0xffffff8014fe2990 : 0xffffff800a69d190
+0xffffff8014fe29b0 : 0xffffff800a6e9d0c
+0xffffff8014fe2ae0 : 0xffffff800a6e9a7c
+0xffffff8014fe2b40 : 0xffffff800a7fdbac
+0xffffff8014fe2bb0 : 0xffffff800a9cf6d0
+
+Following the stack trace and the syscall details from our fuzzer leads us to
+the function necp_client_agent_action. This function allows a user to interact
+with the NECP agent for a specific client uuid.  This function takes 2
+parameters, a client UUID and a buffer.  Before processing the buffer, the
+kernel allocates a kernel buffer and copies the user's buffer to the kernel
+buffer.  However, this buffer size is unchecked and can be as large as the user
+chooses.
+
+There are two problems with the lack of a buffer size check.  First, the _MALLOC
+function will fail to allocate the kernel's buffer if the size is too large.
+_MALLOC has been coded such that a failure to allocate the requested memory will
+cause a kernel panic, rather than returning NULL to its caller, which may not
+check for failure.  To allow _MALLOC to return NULL, the M_NULL flag can be set,
+but this flag is not set in this specific case. Second, the copyin function in
+has a limit set on the amount of memory that can be copied from user memory to
+kernel memory.  If a function tries to call copyin (or copyout) with a size
+larger than 64 megabytes, the kernel will panic with the message shown above.
+A comment in osfmk/x86_64/copyio.c lists the reason for the limit on copy size
+in the copyin function as:
+
+  Yes, this is an arbitrary fixed limit, but it's almost certainly
+  a programming error to be copying more than this amount between
+  user and wired kernel memory in a single invocation on this
+  platform.
+
+As such, our proof of concept is able to cause a kernel panic and local denial
+of service by calling:
+
+  necp_client_action(necp_client_fd, NECP_CLIENT_ACTION_AGENT,
+    client_uuid, sizeof(client_uuid), buffer, 64 * 1024 * 1024 + 1);
+
+Timeline:
+10/24/17 - Bug discovered and began bug triage to understand the bug's impact.
+04/06/18 - Finished bug triage and analysis.
+04/07/18 - Reported to Apple (product-security@apple.com)
+04/13/18 - Apple confirmed they will be addressing this bug in an upcoming
+           security patch, asked for 14 day extension
+04/13/18 - We replied explaining extensions are only given in exceptional cases
+           and there will be no extension unless they can provide evidence that
+           this is anything more than a local DoS bug.
+05/24/18 - Public release
