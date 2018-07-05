@@ -1,0 +1,4 @@
+These bugs affect pdftk 1.12 and later.  pdftk version 1.12 was released
+11/9/2004.  These bugs possibly affects older versions as well, but version
+1.12 is the earliest available from the author's website.
+

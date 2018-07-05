@@ -1,0 +1,35 @@
+%PDF-1.7
+1 0 obj
+  << /Type /Catalog
+     /Pages 2 0 R
+  >>
+endobj
+
+2 0 obj
+  << /Type /Pages
+     /Kids [3 0 R]
+     /Count 1
+  >>
+endobj
+
+3 0 obj
+  << /Type /Page
+     /Parent 2 0 R
+     /MediaBox [0 0 600 400]
+     /Resources << >>
+  >>
+endobj
+
+xref
+0 3
+00000000010 00000 n
+00000000069 00000 n
+00000000141 00000 n
+trailer
+  << 
+/Size 3 
+/Root 0 0 R
+  >>
+startxref
+249
+%%EOF
