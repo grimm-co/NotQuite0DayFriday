@@ -1,0 +1,247 @@
+pdftk bugs
+
+Overview:
+The following is a write-up of two NULL pointer dereference bugs and an infinite
+recursion bug found while fuzzing pdftk.
+
+Discovery Environment:
+Ubuntu 16.04.4 LTS 64-bit
+pdftk version 2.0.2
+
+Exercising:
+Bug 1:
+$ pdftk readpages.pdf
+Bug 2:
+$ pdftk iteratepages.pdf
+Bug 3:
+$ pdftk recursion.pdf
+
+Background:
+pdftk is a utility for making small changes to PDF files, such as combing PDFs,
+rotating pages, etc.  pdftk is primarily written in Java with some C++ code
+wrapping the Java runtime.  In order to allow pdftk to be used without requiring
+users install Java, the pdftk build system compiles the Java source code with
+gcj down to machine code.  The C++ compiler then links directly against the
+compiled Java.
+
+Bug 1 Description:
+After recompiling pdftk with debug symbols (for both the C++ and Java
+components), we can run pdftk in GDB with the crashing input and receive the
+following backtrace.
+
+	Thread 1 "pdftk" received signal SIGSEGV, Segmentation fault.
+	pdftk.com.lowagie.text.pdf.PdfReader.readPages()void (this=@7ffff7e21ee0) at pdftk/com/lowagie/text/pdf/PdfReader.java:924
+	924             rootPages = catalog.getAsDict(PdfName.PAGES);
+	(gdb) bt
+	#0  pdftk.com.lowagie.text.pdf.PdfReader.readPages()void (this=@7ffff7e21ee0) at pdftk/com/lowagie/text/pdf/PdfReader.java:924
+	#1  0x0000000000480cfe in pdftk.com.lowagie.text.pdf.PdfReader.readPdf()void (this=@7ffff7e21ee0) at pdftk/com/lowagie/text/pdf/PdfReader.java:523
+	#2  0x00000000004d7863 in pdftk.com.lowagie.text.pdf.PdfReader.PdfReader(java.lang.String, byte[]) (this=@7ffff7e21ee0, filename=@7ffff7ebdbd0, ownerPassword=ownerPassword@entry=null) at pdftk/com/lowagie/text/pdf/PdfReader.java:172
+	#3  0x00000000004d787b in pdftk.com.lowagie.text.pdf.PdfReader.PdfReader(java.lang.String) (this=<optimized out>, filename=<optimized out>) at pdftk/com/lowagie/text/pdf/PdfReader.java:161
+	#4  0x000000000042d67f in TK_Session::add_reader (this=this@entry=0x7fffffffdb50, input_pdf_p=input_pdf_p@entry=0x908ac0, keep_artifacts_b=keep_artifacts_b@entry=false) at pdftk.cc:234
+	#5  0x000000000042df05 in TK_Session::open_input_pdf_readers (this=this@entry=0x7fffffffdb50) at pdftk.cc:353
+	#6  0x000000000042e458 in TK_Session::open_input_pdf_readers (this=0x7fffffffdb50) at pdftk.cc:2192
+	#7  TK_Session::TK_Session (this=0x7fffffffdb50, argc=3, argv=0x7fffffffde08) at pdftk.cc:2193
+	#8  0x000000000041ae79 in main (argc=3, argv=0x7fffffffde08) at pdftk.cc:3860
+	(gdb) disassemble /m
+	Dump of assembler code for function pdftk.com.lowagie.text.pdf.PdfReader.readPages()void:
+	...
+	923         protected void readPages() throws IOException {
+		 0x0000000000534369 <+25>:    mov    rsi,QWORD PTR [rip+0x3b3478]        # 0x8e77e8 <_ZN5pdftk3com7lowagie4text3pdf7PdfName4ROOTE>
+		 0x0000000000534370 <+32>:    mov    rax,QWORD PTR [rbp+0x0]
+		 0x0000000000534374 <+36>:    mov    rdi,rbp
+		 0x0000000000534377 <+39>:    call   QWORD PTR [rax+0x158]
+		 0x000000000053438a <+58>:    mov    QWORD PTR [rbx+0x48],rax
+
+	924             catalog = trailer.getAsDict(PdfName.ROOT);
+	=> 0x000000000053437d <+45>:    mov    rdx,QWORD PTR [rax]
+		 0x0000000000534380 <+48>:    mov    rsi,QWORD PTR [rip+0x3b36c1]        # 0x8e7a48 <_ZN5pdftk3com7lowagie4text3pdf7PdfName5PAGESE>
+		 0x0000000000534387 <+55>:    mov    rdi,rax
+		 0x000000000053438e <+62>:    call   QWORD PTR [rdx+0x158]
+		 0x0000000000534399 <+73>:    mov    QWORD PTR [rbx+0x38],rax
+
+	925             rootPages = catalog.getAsDict(PdfName.PAGES);
+	...
+	End of assembler dump.
+	(gdb) info registers rax
+	rax            0x0      0
+	(gdb) print catalog
+	$1 = null
+
+
+
+With the debug symbols, it's easy to pinpoint the exact crashing line.
+Specifically, the crash occurs on line 924 in the readPages function.
+
+	protected void readPages() throws IOException {
+		catalog = trailer.getAsDict(PdfName.ROOT);
+		rootPages = catalog.getAsDict(PdfName.PAGES); //Crashing Line
+		pageRefs = new PageRefs(this);
+	}
+
+As can be seen from the GDB output and the source code listing, the code is
+segfaulting because the catalog variable is NULL.  In the PdfReader class, the
+trailer and catalog variables are both PdfDictionary classes which are used to
+hold objects from the parsed PDF file.  The first line of the function queries
+the trailer section of the PDF to obtain a reference to the parsed PDF's root
+object.  The second line then queries the root object to obtain a reference to
+the PDF's pages object.  However, in our crashing input file, the trailer fails
+to obtain a reference to the root item.
+
+As an example, consider the PDF file snippet below. The beginning section
+defines an object as with a reference identifier of <0,1>.  Then below, in
+trailer, the object <1,0> is labeled as the Root object.  If instead, we were to
+mark the Root object as the non-existent <0,0> object, line 924 will return NULL
+and the process will crash.
+
+	%PDF-1.7
+	1 0 obj
+		<< /Type /Catalog
+			 /Pages 2 0 R
+		>>
+	endobj
+
+	...
+
+	trailer
+		<<
+	/Size 3
+	/Root 1 0 R
+		>>
+	startxref
+	249
+	%%EOF
+
+Bug 2 Description:
+Similar to bug 1, this bug 2 is caused by the inability to obtain a reference to
+a PDF object.  However, in this case, pdftk is looking for a Pages item. In the
+example PDF shown above, the Root object has a /Pages element.  If that element
+is missing, the PageRefs:readPages function (shown below) will call the
+iteratePages function with a NULL pointer.  The iteratePages function then
+dereferences this pointer without checking it for NULL, resulting in a segfault.
+
+	void readPages() throws IOException {
+		...
+		iteratePages((PRIndirectReference)reader.catalog.get(PdfName.PAGES));
+		...
+	}
+
+Bug 3 Description:
+Running the third bug in GDB gave us the quite peculiar GDB output:
+
+	Thread 2 "pdftk_debug" received signal SIGPWR, Power fail/restart.
+	[Switching to Thread 0x7ffff25e2700 (LWP 13288)]
+	pthread_cond_wait@@GLIBC_2.3.2 () at ../sysdeps/unix/sysv/linux/x86_64/pthread_cond_wait.S:185
+	185     ../sysdeps/unix/sysv/linux/x86_64/pthread_cond_wait.S: No such file or directory.
+	Continuing.
+
+	Thread 2 "pdftk_debug" received signal SIGXCPU, CPU time limit exceeded.
+	0x00007ffff4363826 in __GI___sigsuspend (set=0x7ffff7dbe360) at ../sysdeps/unix/sysv/linux/sigsuspend.c:30
+	30      ../sysdeps/unix/sysv/linux/sigsuspend.c: No such file or directory.
+
+It's rather unusual to see a program receive a SIGPWR or SIGXCPU signal, and
+thus I was curious as to what could possibly be causing this.  After some
+investigation with strace, it was clear that the binary was using the tgkill
+syscall to send these two signals to each other as an IPC mechanism.  After
+some googling, this behavior was explained by the Java Debugging with GDB page
+at http://gnu.ist.utl.pt/software/gcc/java/gdb.html.  It states:
+
+	When debugging GCJ-compiled Java programs, you may need to tell GDB to ignore
+	the SIGPWR and SIGXCPU signals (which are used by the garbage collector).
+
+With this behavior explained, we run these two GDB commands to ignore these
+signals:
+
+	handle SIGPWR nostop noprint
+	handle SIGXCPU nostop noprint
+
+Now that our GDB session is correctly ignoring those signals, we can continue
+analyzing the crash.  The actual crash is shown in GDB below.  A quick look at
+the backtrace illustrates what is causing the crash.
+
+	Thread 1 "pdftk_debug" received signal SIGSEGV, Segmentation fault.
+	[Switching to Thread 0x7ffff7fd3740 (LWP 13284)]
+	0x00007ffff6a2ff7d in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	(gdb) bt
+	#0  0x00007ffff6a2ff7d in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#1  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#2  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#3  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#4  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#5  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#6  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#7  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#8  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#9  0x00007ffff6a2ff8a in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#10 0x00007ffff6a35229 in ?? () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#11 0x00007ffff61c8eed in _Jv_AllocObjectNoFinalizer () from /usr/lib/x86_64-linux-gnu/libgcj.so.16
+	#12 0x00000000004880b1 in pdftk.com.lowagie.text.pdf.PdfDictionary.PdfDictionary() (this=this@entry=@7fffef5a88a0) at pdftk/com/lowagie/text/pdf/PdfDictionary.java:120
+	#13 0x00000000004893e5 in pdftk.com.lowagie.text.pdf.PdfReader$PageRefs.pushPageAttributes(pdftk.com.lowagie.text.pdf.PdfDictionary)void (this=this@entry=@7ffff7f8fdc0, nodePages=@7ffff7e26d80) at pdftk/com/lowagie/text/pdf/PdfReader.java:3400
+	#14 0x00000000004ebff2 in pdftk.com.lowagie.text.pdf.PdfReader$PageRefs.iteratePages(pdftk.com.lowagie.text.pdf.PRIndirectReference)void (this=this@entry=@7ffff7f8fdc0, rpage=@7ffff7e26d50) at pdftk/com/lowagie/text/pdf/PdfReader.java:3441
+	#15 0x00000000004ec036 in pdftk.com.lowagie.text.pdf.PdfReader$PageRefs.iteratePages(pdftk.com.lowagie.text.pdf.PRIndirectReference)void (this=this@entry=@7ffff7f8fdc0, rpage=<optimized out>) at pdftk/com/lowagie/text/pdf/PdfReader.java:3449
+	...
+	#130717 0x00000000004ec036 in pdftk.com.lowagie.text.pdf.PdfReader$PageRefs.iteratePages(pdftk.com.lowagie.text.pdf.PRIndirectReference)void (this=this@entry=@7ffff7f8fdc0, rpage=<optimized out>) at pdftk/com/lowagie/text/pdf/PdfReader.java:3449
+	#130718 0x00000000004ec036 in pdftk.com.lowagie.text.pdf.PdfReader$PageRefs.iteratePages(pdftk.com.lowagie.text.pdf.PRIndirectReference)void (this=this@entry=@7ffff7f8fdc0, rpage=<optimized out>) at pdftk/com/lowagie/text/pdf/PdfReader.java:3449
+	#130719 0x00000000005341fd in pdftk.com.lowagie.text.pdf.PdfReader$PageRefs.readPages()void (this=@7ffff7f8fdc0) at pdftk/com/lowagie/text/pdf/PdfReader.java:3256
+	#130720 0x00000000005342bb in pdftk.com.lowagie.text.pdf.PdfReader$PageRefs.PdfReader$PageRefs(pdftk.com.lowagie.text.pdf.PdfReader) (this=@7ffff7f8fdc0, reader=@7ffff7e22ee0) at pdftk/com/lowagie/text/pdf/PdfReader.java:3226
+	#130721 0x00000000005343b2 in pdftk.com.lowagie.text.pdf.PdfReader$PageRefs.PdfReader$PageRefs(pdftk.com.lowagie.text.pdf.PdfReader, pdftk.com.lowagie.text.pdf.PdfReader$PageRefs) (ARG_2=null, ARG_1=@7ffff7e22ee0, this=@7ffff7f8fdc0)
+			at pdftk/com/lowagie/text/pdf/PdfReader.java:3218
+	#130722 pdftk.com.lowagie.text.pdf.PdfReader.readPages()void (this=@7ffff7e22ee0) at pdftk/com/lowagie/text/pdf/PdfReader.java:925
+	#130723 0x0000000000480cfe in pdftk.com.lowagie.text.pdf.PdfReader.readPdf()void (this=@7ffff7e22ee0) at pdftk/com/lowagie/text/pdf/PdfReader.java:523
+	#130724 0x00000000004d7863 in pdftk.com.lowagie.text.pdf.PdfReader.PdfReader(java.lang.String, byte[]) (this=@7ffff7e22ee0, filename=@7ffff7e21fc0, ownerPassword=ownerPassword@entry=null) at pdftk/com/lowagie/text/pdf/PdfReader.java:172
+	#130725 0x00000000004d787b in pdftk.com.lowagie.text.pdf.PdfReader.PdfReader(java.lang.String) (this=<optimized out>, filename=<optimized out>) at pdftk/com/lowagie/text/pdf/PdfReader.java:161
+	#130726 0x000000000042d67f in TK_Session::add_reader (this=this@entry=0x7fffffffdb60, input_pdf_p=input_pdf_p@entry=0x908ac0, keep_artifacts_b=keep_artifacts_b@entry=false) at pdftk.cc:234
+	#130727 0x000000000042df05 in TK_Session::open_input_pdf_readers (this=this@entry=0x7fffffffdb60) at pdftk.cc:353
+	#130728 0x000000000042e458 in TK_Session::open_input_pdf_readers (this=0x7fffffffdb60) at pdftk.cc:2192
+	#130729 TK_Session::TK_Session (this=0x7fffffffdb60, argc=2, argv=0x7fffffffde18) at pdftk.cc:2193
+	#130730 0x000000000041ae79 in main (argc=2, argv=0x7fffffffde18) at pdftk.cc:3860
+	(gdb) info proc mappings
+      0x7fffff7ff000     0x7ffffffff000   0x800000        0x0 [stack]
+
+Our input has caused pdftk to recursed 130 thousand times.  As a result, the
+stack has grown to 8MB, the default maximum stack size allowed on Ubuntu.
+
+To determine the cause of the infinite recursion, we reference the line number
+mentioned in the backtrace.  At line 3449 in PdfReader.java, we see the
+iteratePages function, shown below.
+
+	private void iteratePages(PRIndirectReference rpage) throws IOException {
+		PdfDictionary page = (PdfDictionary)getPdfObject(rpage);
+		PdfArray kidsPR = page.getAsArray(PdfName.KIDS);
+		...
+		for (int k = 0; k < kidsPR.size(); ++k){
+			PdfObject obj = kidsPR.getPdfObject(k);
+			...
+			iteratePages((PRIndirectReference)obj);
+		}
+		...
+	}
+
+This function walks over the PDF and obtains metadata for each of the objects in
+the PDF.  The objects in a PDF can form a hierarchy, where each object can have
+children objects.  However, this code does not protect against loops when
+walking the hierarchy, and thus the object shown below will make pdftk recurse
+until it runs out of stack space.  This object, referenced as <2,0>, contains a
+Kids attribute that lists itself as a child.
+
+	2 0 obj
+		<< /Type /Pages
+			/Kids [2 0 R]
+			/Count 1
+		>>
+	endobj
+
+
+Impact:
+While normally a Java program would catch a null pointer exception, pdftk's
+unusual compilation process has resulted in the null pointers being directly
+dereferenced and causing a segfault. However, since the first two bugs are
+merely NULL pointer dereferences, and their impact is limited to causing a
+denial of service.  Additionally, the infinite recursion bug merely causes an
+out-of-bounds read with no opportunity to control the read address.  As such, it
+also will only be able to result in a denial of service.  Further exploitation
+of these three bugs is almost certainly not possible.
+
+Timeline:
+2018.05.08 - Found crashes and triaged bugs
+2018.05.09 - Bugs reported to sid.steward@pdflabs.com
+2018.07.05 - Public disclosure
