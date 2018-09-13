@@ -1,6 +1,8 @@
-Malicious Command Execution via bash-completion
- or
-CVE-2018-7738
+Malicious Command Execution via bash-completion (CVE-2018-7738)
+
+
+Note: This was a parallel discovery where we found the bug and later found out
+it already had a CVE from Tenable.  See timeline for details.
 
 
 Affected Versions:
@@ -99,8 +101,22 @@ shipping util-linux 2.31:
 And util-linux verison 2.31 does have the code causing the problem:
     https://github.com/karelzak/util-linux/blob/stable/v2.31/bash-completion/umount#L44
 
-It appears to be fixed in the next revision (2.32) of util-linux.
+It was originally introduced in 2013 in this commit:
+    https://github.com/karelzak/util-linux/commit/2211b13ed87cef802cfa1ed07b5e8a9847cdfb88
+
+It appears to be fixed in the next revision (2.32) of util-linux (released 2018.03.21)
     https://github.com/karelzak/util-linux/blob/stable/v2.32/bash-completion/umount#L44
+    https://github.com/karelzak/util-linux/releases/tag/v2.32
+
+It is also interesting to note that the bug report for this issue does not
+identify it as being a security issue, but rather as broken functionality when
+a volume name has a space.  This shows that the issue was not found due to a
+security review, but just because of other side effects.
+    https://github.com/karelzak/util-linux/issues/539
+
+It also explains why it took over 4 months between when the patch was introduced
+and when the release was cut.  If it was considered a security issue, the patch 
+likely would have landed in a release more quickly.
 
 You can see this bug goes back a while on Ubuntu: 
     https://git.launchpad.net/ubuntu/+source/util-linux/commit/bash-completion/umount?h=applied/ubuntu/bionic&id=0036b080916d422aad4e352ee25402f336d15348
@@ -185,7 +201,9 @@ variable was introduced over 13 years ago:
     https://github.com/scop/bash-completion/commit/fa7a4bcaeab1c583d25dd70404157e14024f58c3
 
 And as near as I can determine this particular functionality has never worked as
-intended.
+intended.  If this functionality is ever fixed, it may create an exploitable
+condition here which would allow SSIDs with malicious strings in them to gain
+command execution.
 
 
 Lesson:
@@ -194,12 +212,22 @@ time. Small changes in the source of a script in this case caused a security
 issue. Updating and maintaining things is hard and it's very easy for small
 changes to result in security issues.
 
+These bugs often go undiscovered for years, and even after they are patched and
+a new version is released, it can take months before projects which depend on
+this code are updated.  If this concerns you, learn about what is happening on
+your computer (or tablet, phone, etc.).  Remove features that you don't need.
+
 Be curious and figure out how things work. Try not to be too horrified when you
 figure out how things work.
 
 
 Timeline:
-08/22/18 - Bug discovered and began triage to identify the root cause.
-09/11/18 - Finished bug triage and research into the origins of the bug,
+2013.04.13 umount bug introduced into util-linux
+2016-03-31 umount bug introduced into Ubuntu
+2017.11.16 umount bug fixed in util-linux repo
+2018.03.06 CVE-2018-7738 published https://www.cvedetails.com/cve/CVE-2018-7738/
+2018.03.21 util-linux v2.32 released, which fixes mount bug
+2018.08.22 Bug discovered and began triage to identify the root cause.
+2018.09.11 Finished bug triage and research into the origins of the bug,
            including identifying the existing CVE: CVE-2018-7738
-09/14/18 - Public release.
+2018.09.14 Publicly released this triage write-up
