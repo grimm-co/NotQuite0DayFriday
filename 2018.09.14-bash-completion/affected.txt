@@ -1,0 +1,6 @@
+This bug affects anyone using the bash-completion script for umount from
+version 2.31 of util-linux.
+
+It was found on Ubuntu 18.04.
+
+A full analysis of which Linux distributions use this package was not done.
