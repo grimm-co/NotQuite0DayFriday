@@ -223,7 +223,7 @@ figure out how things work.
 
 Timeline:
 2013.04.13 umount bug introduced into util-linux
-2016-03-31 umount bug introduced into Ubuntu
+2016.03.31 umount bug introduced into Ubuntu
 2017.11.16 umount bug fixed in util-linux repo
 2018.03.06 CVE-2018-7738 published https://www.cvedetails.com/cve/CVE-2018-7738/
 2018.03.21 util-linux v2.32 released, which fixes mount bug
