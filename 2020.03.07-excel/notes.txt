@@ -1,0 +1,69 @@
+Denial Of Service via Excel Spreadsheets
+
+Overview:
+The following is a write-up of a denial of service caused by opening an Excel
+spreadsheet that has been modified to increase the number of open windows.
+
+Discovery Environment:
+macOS 10.15.1 on a 2015 MacBook Pro with 16GB of memory
+Microsoft Excel for Mac Version 16.32 (19120802)
+
+Exercising:
+$ python3 excel_add_windows.py -n 5000 base.xlsx 5000windows.xlsx
+$ open 5000windows.xlsx
+$ python3 excel_add_windows.py -n 9999 base.xlsx 10000windows.xlsx
+$ open 10000windows.xlsx
+
+Description:
+During a recent project, a coworker and I were sharing an Excel spreadsheet.
+While I had a single monitor, my coworker had 3 monitors. As such, they opened
+multiple windows of the same spreadsheet in order to allow themselves to review
+multiple parts of the spreadsheet at once. However, when I later received the
+spreadsheet and opened it, Excel maintained the number and size of the opened
+windows. As such, we hypothesized that the number of windows that Excel should
+open is saved within the spreadsheet file.
+
+Upon further investigation, we identified two XML items which indicated a new
+Excel window. After unzipping an Excel xlsx file, the file xl/workbook.xml will
+contain a workbookView element for each open window that describes the position
+and size of the window. Additionally, within the selected sheet's XML document,
+i.e. xl/worksheets/sheet1.xml, each open window will have a sheetView XML
+element that will describe what the window is viewing and has selected. By
+adding additional workbookView and sheetView items to the Excel spreadsheet, we
+can add additional open windows to the spreadsheet file. However, Excel does not
+limit the number of open windows. If Excel tries to open a file that has a large
+number of open windows, such as the included 5000windows.xlsx or
+10000windows.xlsx, it will slowly allocate all of the system's memory and cause
+a resource exhaustion based denial of service. During our testing on a 2015
+MacBook Pro, a spreadsheet with 5000 open windows caused Excel to eventually
+acquire more than 16GB of memory and cause the WindowServer (the macOS GUI
+server) on the MacBook Pro to crash and restart. Further testing showed that a
+spreadsheet with 10000 opened windows caused Excel to acquire 205GB of memory on
+the 16GB machine, of which 202GB was compressed (see ExcelMemory.png for a
+screenshot of macOS's Activity Monitor showing the memory usage). As a proposed
+fix, Excel should instead prompt the user and ask if they would like to continue
+before opening a large number of windows.
+
+Impact:
+This bug may cause a resource exhaustion based denial of service. When an Excel
+spreadsheet with a large number of windows is opened, it will slowly attempt to
+allocate all of the system's memory. As such, it may cause the system to become
+unresponsive. This bug is of particular interest for cloud service providers,
+such as Box, which host services that automatically open and parse spreadsheets
+to provide the user with a preview of the spreadsheet. If the service uses Excel
+to generate the previews, a user may be able to crash the web service with the
+bug. Due to concerns of causing a denial of service, GRIMM did not test this bug
+in any cloud provider's service.
+
+Another potential target would be SharePoint, which is similar to a cloud
+provider.  GRIMM did not have a SharePoint server available to determine whether
+it is an issue in that environment.
+
+Timeline:
+2019.11.15 - Bug Discovered
+2019.12.24 - Write-up finished and sent to Microsoft
+2019.01.07 - Followed up with Microsoft
+2019.01.10 - Microsoft responds saying they can not reproduce the issue
+2019.01.14 - Responded to Microsoft with 5000 window example, testing ongoing
+2019.02.05 - Informed Microsoft we were unable to reproduce on a fully patched system
+2019.02.07 - Public release (non-security issue)
