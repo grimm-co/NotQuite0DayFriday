@@ -1,7 +1,7 @@
 iOS Denial of Service via Universal Links in Safari
 
 Overview:
-A remote attacker whom can trick a user into opening a webpage in Safari can
+A remote attacker who can trick a user into opening a webpage in Safari can
 trigger a Denial of Service (DoS) in iOS by repeatedly opening a Universal Link.
 
 Tested Versions:
@@ -17,7 +17,7 @@ $ python3 -m http.server
 
 Details:
 If a user with an application installed that uses Universal Links browses to a
-webpage that continually loads that application's Universal Link, then Safari
+webpage that continually loads that application's Universal Link, Safari
 will continuously try to load the application. This causes a DoS on the device
 as the user is continually being redirected to the application. The example
 poc.html webpage demonstrates this DoS attack using the Reddit iOS application's
@@ -30,13 +30,13 @@ device. The only way found to stop the attack is to lock and unlock the device.
 
 Timeline:
 2020.03.20 Discovered Issue
-2020.04.10 Reported issue to Apple, got automated acknoledgement
-2020.04.13 A human from confirms they read the report and are investigating
-2020.04.21 Apple confirms they consider it a security issue as for extension
+2020.04.10 Reported issue to Apple, got automated acknowledgement
+2020.04.13 A human from Apple confirms they read the report and are investigating
+2020.04.21 Apple confirms they consider it a security issue; asks for extension
            without providing any ETA for the fix
 2020.04.23 We inform Apple this issue doesn't warrant an extension, but if they
            are willing to commit to a fix within 14 days of the deadline, we
-           can grant an extension (i.e. up to June 21st)
-2020.04.23 Apple confirms thanks us for confirming disclosue date of June 7th
+           can grant an extension (up to June 21st)
+2020.04.23 Apple confirms; confirmis disclosue date of June 7th
 2020.05.21 Apple releases iOS 13.5
-2020.06.02 We realize this was fixed in 13.5, public disclosure
+2020.06.02 We confirm this was fixed in 13.5, public disclosure
