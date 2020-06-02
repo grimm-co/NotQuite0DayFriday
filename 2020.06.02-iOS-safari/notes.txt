@@ -1,0 +1,42 @@
+iOS Denial of Service via Universal Links in Safari
+
+Overview:
+A remote attacker whom can trick a user into opening a webpage in Safari can
+trigger a Denial of Service (DoS) in iOS by repeatedly opening a Universal Link.
+
+Tested Versions:
+* Safari in iOS 13.3.1
+* Safari in iOS 13.4
+
+Exercising:
+1) Install the Reddit application from the iOS app store.
+1) Host the poc.html example web page in a server, such as python's http.server
+module:
+$ python3 -m http.server
+2) From within Safari, connect to the web server and view the poc.html page.
+
+Details:
+If a user with an application installed that uses Universal Links browses to a
+webpage that continually loads that application's Universal Link, then Safari
+will continuously try to load the application. This causes a DoS on the device
+as the user is continually being redirected to the application. The example
+poc.html webpage demonstrates this DoS attack using the Reddit iOS application's
+Universal Link. As shown in the included video, the user is unable to close
+either app, as Safari keeps reopening the Reddit app, and the Reddit app keeps
+popping up in front of Safari (preventing the user from closing it).
+Furthermore, as long as Safari is continually opening the Reddit app, the device
+will refuse to open the restart menu, preventing the user from rebooting the
+device. The only way found to stop the attack is to lock and unlock the device.
+
+Timeline:
+2020.03.20 Discovered Issue
+2020.04.10 Reported issue to Apple, got automated acknoledgement
+2020.04.13 A human from confirms they read the report and are investigating
+2020.04.21 Apple confirms they consider it a security issue as for extension
+           without providing any ETA for the fix
+2020.04.23 We inform Apple this issue doesn't warrant an extension, but if they
+           are willing to commit to a fix within 14 days of the deadline, we
+           can grant an extension (i.e. up to June 21st)
+2020.04.23 Apple confirms thanks us for confirming disclosue date of June 7th
+2020.05.21 Apple releases iOS 13.5
+2020.06.02 We realize this was fixed in 13.5, public disclosure
