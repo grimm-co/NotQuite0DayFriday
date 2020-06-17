@@ -53,7 +53,7 @@ The exploit has been tested to work against the following devices and versions:
 * R6300v2 version 1.0.3.6CH, 1.0.3.8, and 1.0.4.32
 * R6400 version 1.0.1.20, 1.0.1.36, and 1.0.1.44
 * R7000 versions 9.88, 9.64, 9.60, 9.42, 9.34, 9.18, 9.14, 9.12, 9.10, 9.6, and 8.34
-* R8000 version 1.0.4.18
+* R8000 version 1.0.4.18, 1.0.4.46
 * R8300 version 1.0.2.128 and 1.0.2.130
 * R8500 version 1.0.0.28
 * WGR614v9 version 1.2.32NA
