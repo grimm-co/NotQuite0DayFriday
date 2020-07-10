@@ -77,9 +77,13 @@ padding in this struct the can be used to leak additional kernel memory.
 
 ### Timeline
 2020.07.08 - Reported bug to FreeBSD (secteam@FreeBSD.org) and OpenBSD (deraadt@openbsd.org)
+
 2020.07.08 - Theo provides feedback and patches the bug[1]
+
 2020.07.08 - FreeBSD security team responds acknowledging the report
+
 2020.07.09 - Errata issued for OpenBSD[2]
+
 2020.07.10 - Public release
 
 [1] https://github.com/openbsd/src/commit/464b9e490f2a1ac3e43c1dd16ffd344d9bbc61e0
