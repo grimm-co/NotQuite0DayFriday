@@ -92,6 +92,22 @@ struct symbol_offset rhel_8_3_kernel_4_18_0_240_10_1_el8_3_symbols[] = {
 	{ .is_address = 0, .value = 0x328,               }, //MODULE_REFCNT_OFFSET
 };
 
+struct symbol_offset rhel_8_3_kernel_4_18_0_240_15_1_el8_3_symbols[] = {
+	{ .is_address = 1, .value = 0xffffffff810d8530UL }, //PARAM_ARRAY_FREE
+	{ .is_address = 1, .value = 0xffffffff818c6cb0UL }, //MEMCPY
+	{ .is_address = 1, .value = 0xffffffff810dc650UL }, //RUN_CMD
+	{ .is_address = 1, .value = 0xffffffff817a7450UL }, //NETLINK_SOCK_DESTRUCT
+	{ .is_address = 1, .value = 0xffffffff822ab7f0UL }, //MODULE_LIST_HEAD
+	{ .is_address = 1, .value = 0xffffffff82d443b8UL }, //MODULE_KSET
+	{ .is_address = 1, .value = 0xffffffff818b97f0UL }, //SEQ_BUF_PUTMEM
+	{ .is_address = 1, .value = 0xffffffff818b9a10UL }, //SEQ_BUF_TO_USER
+	{ .is_address = 0, .value = 0x340,               }, //MODULE_INFO_DIFF
+	{ .is_address = 0, .value = 0x0,                 }, //MODULE_STATUS_OFFSET
+	{ .is_address = 0, .value = 0x8,                 }, //MODULE_LIST_OFFSET
+	{ .is_address = 0, .value = 0x58,                }, //MODULE_KOBJ_LIST_OFFSET
+	{ .is_address = 0, .value = 0x328,               }, //MODULE_REFCNT_OFFSET
+};
+
 //The mapping of kernel versions to known symbols/offsets
 struct kernel_symbols  all_kernel_symbols[] = {
 	{ .symbols = rhel_8_1_kernel_4_18_0_147_8_1_el8_1_symbols,
@@ -106,6 +122,10 @@ struct kernel_symbols  all_kernel_symbols[] = {
 	{ .symbols = rhel_8_3_kernel_4_18_0_240_10_1_el8_3_symbols,
 		.count = ARRAY_SIZE(rhel_8_3_kernel_4_18_0_240_10_1_el8_3_symbols),
 		.uname = "4.18.0-240.10.1.el8_3.x86_64" },
+	{ .symbols = rhel_8_3_kernel_4_18_0_240_15_1_el8_3_symbols,
+		.count = ARRAY_SIZE(rhel_8_3_kernel_4_18_0_240_15_1_el8_3_symbols),
+		.uname = "4.18.0-240.15.1.el8_3.x86_64" },
+
 };
 
 static struct kernel_symbols * current_kernel_symbols = NULL;
