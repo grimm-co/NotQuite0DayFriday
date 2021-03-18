@@ -1,0 +1,96 @@
+Local denial of service in the necp_client_action syscall
+
+Overview:
+The following is a write-up of a local denial of service vulnerability found in
+the XNU necp_client_action syscall. The necp_client_action syscall is part of
+the Network Extension Control Policy (NECP) kernel subsystem.
+
+Affected Versions:
+XNU kernel versions 7195.50.7.100.1 and later
+
+Discovery Environment:
+iOS 14.3
+
+Crash Report:
+panic(cpu 1 caller 0xfffffff00727f2bc): "copy_validate(0x16f4871a8, 0xffffffe8bbdb8000, 67108865) - transfer too large"
+Panicked thread: 0xffffffe19e2b7168, backtrace: 0xffffffe80fbbb5a0, tid: 27439
+  lr: 0xfffffff00717d018  fp: 0xffffffe80fbbb5e0
+  lr: 0xfffffff00717ce74  fp: 0xffffffe80fbbb650
+  lr: 0xfffffff007288d5c  fp: 0xffffffe80fbbb720
+  lr: 0xfffffff00713d5fc  fp: 0xffffffe80fbbb730
+  lr: 0xfffffff00717cba8  fp: 0xffffffe80fbbbab0
+  lr: 0xfffffff00717cba8  fp: 0xffffffe80fbbbb10
+  lr: 0xfffffff00777d8a0  fp: 0xffffffe80fbbbb30
+  lr: 0xfffffff00727f2bc  fp: 0xffffffe80fbbbb60
+  lr: 0xfffffff00727f0d4  fp: 0xffffffe80fbbbb90
+  lr: 0xfffffff0073cff10  fp: 0xffffffe80fbbbd30
+  lr: 0xfffffff0073cdfe8  fp: 0xffffffe80fbbbd90
+  lr: 0xfffffff00766805c  fp: 0xffffffe80fbbbe20
+  lr: 0xfffffff007288cbc  fp: 0xffffffe80fbbbef0
+  lr: 0xfffffff00713d5fc  fp: 0xffffffe80fbbbf00
+
+Details:
+This bug was identified via manual analysis. The buffer_size in the
+necp_client_add_flow function is checked only for a minimum size, and not for a
+maximum. Before processing the buffer, the kernel allocates a kernel buffer and
+copies the user's buffer to the kernel buffer. Since the buffer size is 
+unchecked, it can be as large as the user wishes.
+
+There are two problems with the lack of a buffer size check. First, the _MALLOC
+function will fail to allocate the kernel's buffer if the size is too large.
+_MALLOC has been coded such that a failure to allocate the requested memory will
+cause a kernel panic, rather than returning NULL to its caller, which may not
+check for failure. To allow _MALLOC to return NULL, the M_NULL flag can be set,
+but this flag is not set in this specific case. Second, the copyin function in
+has a limit set on the amount of memory that can be copied from user memory to
+kernel memory. If a function tries to call copyin (or copyout) with a size
+larger than 64 megabytes, the kernel will call the panic function (see
+osfmk/x86_64/copyio.c and osfmk/arm64/copyio.c):
+
+  if (__improbable(nbytes > copysize_limit_panic)) {
+    panic("%s(%p, %p, %lu) - transfer too large", __func__,
+      (void *)user_addr, (void *)kernel_addr, nbytes);
+  }
+
+A comment next to the copysize_limit_panic definition lists the reason for the
+limit in the copyin function as:
+
+  Yes, this is an arbitrary fixed limit, but it's almost certainly
+  a programming error to be copying more than this amount between
+  user and wired kernel memory in a single invocation on this
+  platform.
+
+As such, our proof of concept is able to cause a kernel panic and local denial
+of service by calling:
+
+  necp_client_action(necp_client_fd, NECP_CLIENT_ACTION_ADD_FLOW,
+    client_uuid, sizeof(client_uuid), buffer, 64 * 1024 * 1024 + 1);
+
+In addition to the copyio panic and the allocation failure panic, _MALLOC can
+panic during allocations if rounding the allocation size overflows. For example,
+if the user requests 2**64 - 1 bytes of memory, _MALLOC will round this value to
+the nearest page size (4096 on macOS, 16384 on iOS) via the round_page function
+in osfmk/mach/vm_param.h. The rounding is accomplished by adding PAGE_SIZE - 1,
+i.e. the page mask, and then masking off the lower bits of the size. If this
+addition overflows the 64-bit variable, the kernel will call the panic function
+with the message "overflow detected".
+
+Of note, this is almost exactly the same bug as previously reported in the
+NECP_CLIENT_ACTION_AGENT action:
+  https://github.com/grimm-co/NotQuite0DayFriday/tree/master/2018.05.24-macos
+
+Timeline:
+2021.01.26 - Bug discovered
+2021.01.28 - Reported to Apple Product Security
+2021.02.11 - Apple asks if we're willing to delay public disclosure to an
+             unspecified date in a "Spring 2021 security update"
+2021.02.12 - We inform Apple that we'll be publicly disclosing after 45 days and
+             ask for the CVE number for this vulnerability
+2021.02.24 - Apple informs us this issue will not receive a CVE, but will be
+             acknowledged in their security advisory, repeats their request to
+             withhold disclosure to an unspecified date
+2021.02.25 - We inform Apple the disclosure deadline will not change
+2021.03.03 - Apple asks to double our disclosure deadline
+2021.03.04 - We inform them that this issue is not "of an especially serious
+             nature" and does not qualify for an extension
+2021.03.18 - Public release

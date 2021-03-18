@@ -1,0 +1,1 @@
+This bug was first found in the XNU kernel versions 7195.50.7.100.1 and later.
