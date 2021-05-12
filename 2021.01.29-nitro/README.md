@@ -100,7 +100,7 @@ prevent exploitation.
     was not marked as a vulnerability, and as such any products using NITRO may
     not incorporate the fix into their product.
 
-This vulnerability was given CVE CVE-2021-26498.
+This vulnerability was assigned CVE number CVE-2021-26498.
 
 2. In the `nitf_Record_unmergeTREs` function in `modules/c/nitf/Record.c`, the
 `overflow` pointer on the stack is not initialized upon creation. Then later,
