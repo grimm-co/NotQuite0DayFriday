@@ -42,7 +42,7 @@ within your network.
 
 -   Impact: Potential Download and Execution of Malicious Payloads
 
--   CVE Number: TBD
+-   CVE Number: CVE-2021-30110
 
 The Domain Time II Client and Server programs both use the same
 executable, `dttray.exe`, to check for updates. Neither program
@@ -211,3 +211,5 @@ the internet and not running in HTTP impersonation mode.
 -   04/06/2021 - NotQuite0DayFriday release
 
 -   04/06/2021 - Blog post release
+
+-   05/12/2021 - Received CVE number from MITRE
