@@ -100,6 +100,8 @@ prevent exploitation.
     was not marked as a vulnerability, and as such any products using NITRO may
     not incorporate the fix into their product.
 
+This vulnerability was assigned CVE number CVE-2021-26498.
+
 2. In the `nitf_Record_unmergeTREs` function in `modules/c/nitf/Record.c`, the
 `overflow` pointer on the stack is not initialized upon creation. Then later,
 within the `UNMERGE_SEGMENT` macro, the `overflow` pointer is dereferenced in a 
@@ -117,6 +119,8 @@ stack alignment, it may also be exploited.
     The remaining `NULL` pointer dereference vulnerability can be mitigated by
     modifying the `UNMERGE_SEGMENT` macro to check the `overflow` variable for
     `NULL` and erroring out accordingly.
+
+This vulnerability was assigned CVE number CVE-2021-26497.
 
 3. The [`defaultRead`
 function](https://github.com/mdaus/nitro/blob/5c8c30b1c95/modules/c/nitf/source/DefaultTRE.c#L88)
@@ -140,6 +144,8 @@ length, it will crash once the code writes beyond the end of the heap.
     This vulnerability can be mitigated by modifying the `defaultRead` function
     to check the `length` parameter for an integer overflow and exiting with an
     error if detected.
+
+This vulnerability was assigned CVE number CVE-2021-26501.
 
 4. The [`readBandInfo`
 function](https://github.com/mdaus/nitro/blob/5c8c30b1c95/modules/c/nitf/source/NitfReader.c#L1412)
@@ -166,6 +172,8 @@ original length, it will crash once the code writes beyond the end of the heap.
     to validate that the product of the `numLuts` and `bandEntriesPerLut`
     variables does not overflow and exiting with an error if it does.
 
+This vulnerability was assigned CVE number CVE-2021-26499.
+
 5. The [`readRESubheader`
 function](https://github.com/mdaus/nitro/blob/5c8c30b1c95/modules/c/nitf/source/NitfReader.c#L970)
 in `modules/c/nitf/Reader.c` (since renamed to NitfReader.c) does not allocate
@@ -181,6 +189,8 @@ bug to obtain code execution.
     field in the `subhdr` variable, via the `nitf_TRE_createSkeleton` function,
     similar to the `readDESubheader` function.
 
+This vulnerability was assigned CVE number CVE-2021-26500.
+
 6. The [`nitf_Record_unmergeTREs`
 function](https://github.com/mdaus/nitro/blob/5c8c30b1c95/modules/c/nitf/source/Record.c#L2182)
 iterates over each of the scanned NITF's labels, unmerging the extension
@@ -192,6 +202,8 @@ use this bug to cause a denial of service.
     
     This vulnerability can be mitigated by incrementing the `segIter` iterator,
     via a call to `nitf_ListIterator_increment`.
+
+This vulnerability was assigned CVE number CVE-2021-26502.
 
 7. The [`defaultRead`
 function](https://github.com/mdaus/nitro/blob/5c8c30b1c95/modules/c/nitf/source/DefaultTRE.c#L88)
@@ -205,8 +217,11 @@ files, this bug may allow an attacker to cause a denial of service.
     This vulnerability can be mitigated by conditionally freeing the `data`
     variable in the error handler, similar to the `descr` variable.
 
+This vulnerability was assigned CVE number CVE-2021-26503.
+
 ### Timeline
 * 2021.01.26 Notified Nitro maintainer & US CERT; applied for CVE
 * 2021.01.26 Maintainer acknowledged our report
 * 2021.01.27 Maintainer released 2.10.0, which fixed the reported issues
 * 2021.01.29 Public disclosure
+* 2021.05.12 Received CVEs from MITRE
