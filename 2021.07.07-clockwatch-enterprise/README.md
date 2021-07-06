@@ -162,6 +162,6 @@ command.
 -   06/02/2021 - Beagle Software confirms that they will not fix the
     vulnerability
 
--   07/06/2021 - NotQuite0DayFriday release
+-   07/07/2021 - NotQuite0DayFriday release
 
--   07/06/2021 - Blog post release
+-   07/07/2021 - Blog post release
