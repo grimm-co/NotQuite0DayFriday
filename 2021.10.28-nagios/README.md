@@ -38,7 +38,7 @@ vulnerabilities such as the ones contained in this report.
 -   Location: NSCA `src/nsca.c:handle_connection_read()`
 
 -   Affected Versions: All versions of NSCA from at least 1.2 (2001) to
-    2.10.1 (latest)
+    2.10.1 (latest at time of disclosure)
 
 -   Fixed Version: NSCA version 2.10.1
 
@@ -88,7 +88,8 @@ possible.
 
 -   Location: NRDP `nrdp/server/config.inc.php:140`
 
--   Affected Versions: NRDP 1.3.1 (Oct 2013) to 2.0.4 (latest)
+-   Affected Versions: NRDP 1.3.1 (Oct 2013) to 2.0.4 (latest at time of
+    disclosure)
 
 -   Impact: Clients can send arbitrary “external commands” with
     unchecked contents that can lead to XSS or other effects.
@@ -114,7 +115,7 @@ by a system administrator. GRIMM’s perspective is that since Nagios by
 default exposes all external commands to be used by a client, all
 default installations of Nagios are vulnerable to the external command
 XSS bugs described below. If external commands were disabled by default,
-than those XSS bugs would only affect Nagios servers in environments in
+then those XSS bugs would only affect Nagios servers in environments in
 which the vulnerable external commands were explicitly allowed by
 administrators. We suspect that the number of vulnerable servers in the
 latter case would be much lower than in the case of the former.
@@ -127,7 +128,8 @@ latter case would be much lower than in the case of the former.
     `nagiosxi/html/includes/configwizards/linux-server/linux-server.inc.php:720`
     and `nagiosxi/html/includes/configwizards/ncpa/ncpa.inc.php:723`
 
--   Affected Versions: Nagios XI 5.7.0 (June 2020) to 5.8.6 (latest)
+-   Affected Versions: Nagios XI 5.7.0 (June 2020) to 5.8.6 (latest at
+    time of disclosure)
 
 -   Fixed Version: Fixed in NCPA configuration wizard version 3.0.10
 
@@ -166,7 +168,7 @@ wizards:
     Nagios Core: `cgi/extinfo.c:show_all_comments:1834`
 
 -   Affected Versions: All known released version of Nagios XI and
-    Nagios Core to latest
+    Nagios Core to latest at time of disclosure
 
 -   Fixed Version: Fixed in Nagios XI version 5.8.7
 
@@ -195,7 +197,7 @@ very plausible attack chain.
 -   Location: `nagiosxi/html/admin/sshterm.php:158`
 
 -   Affected Versions: Nagios XI from at least 5.5.0 (June 2018) to
-    5.8.6 (latest)
+    5.8.6 (latest at time of disclosure)
 
 -   Fixed Version: Fixed in Nagios XI version 5.8.7
 
@@ -231,7 +233,7 @@ page. After login, they will be redirected back to the original
 -   Location: `/nagiosxi/html/account/main.php:154`
 
 -   Affected Versions: Nagios XI from at least 5.3.0 (Oct 2016) to 5.8.6
-    (latest)
+    (latest at time of disclosure)
 
 -   Fixed Version: Fixed in Nagios XI version 5.8.7
 
@@ -261,7 +263,7 @@ page with the payload still intact.
 -   Location: `/nagiosxi/html/admin/auditlog.php:292`
 
 -   Affected Versions: Nagios XI from at least 5.7.0 (June 2020) to
-    5.8.6 (latest)
+    5.8.6 (latest at time of disclosure)
 
 -   Fixed Version: Fixed in Nagios XI 5.8.7
 
@@ -304,7 +306,7 @@ administrator).
     `nagiosxi/html/includes/components/highcharts/exporting-server/temp`
 
 -   Affected Versions: Nagios XI from at least 5.7.0 (June 2020) to
-    5.8.6 (latest)
+    5.8.6 (latest at time of disclosure)
 
 -   Fixed Version: Nagios XI version 5.8.7
 
@@ -336,7 +338,7 @@ additional configuration or changes.
     `nagiosxi/html/includes/configwizards/hyperv/hyperv-ajax.php:34`
 
 -   Affected Versions: Nagios XI from at least 5.6.0 (Apr 2019) to 5.8.6
-    (latest)
+    (latest at time of disclosure)
 
 -   Fixed Version: Fixed in Nagios XI version 5.8.7 and version 1.0.2 of
     the config wizard
@@ -379,9 +381,9 @@ curl 'https://127.0.0.1:8443/?:0/api/windowscounters/()/?token=&sleep=1&factor=0
 -   Location: `nagiosxi/scripts/manage_services.sh`
 
 -   Affected Versions: Nagios XI versions from at least 5r1.0 (Sep 2015)
-    to 5.8.6 (latest) installed on systems with versions of systemctl
-    that use the system pager (present on CentOS 8 and Ubuntu 18.04 and
-    20.04)
+    to 5.8.6 (latest at time of disclosure) installed on systems with
+    versions of systemctl that use the system pager (present on CentOS 8
+    and Ubuntu 18.04 and 20.04)
 
 -   Fixed Version: Fixed in Nagios XI version 5.8.7
 
@@ -407,7 +409,8 @@ be run by prepending them with an exclamation point.
 -   Location: run_migration_ansible() in
     `nagiosxi/scripts/migrate/migrate.php`
 
--   Affected Versions: Nagios XI 5.8.0 (January 2021) to 5.8.6 (latest)
+-   Affected Versions: Nagios XI 5.8.0 (January 2021) to 5.8.6 (latest
+    at time of disclosure)
 
 -   Fixed Version: Fixed in Nagios XI version 5.8.7
 
@@ -623,15 +626,10 @@ of the initial access vulnerabilities.
 <img src="images/xss_comment.png" style="width:85.0%" alt="Visible comment from ADD_HOST_COMMENT with hidden XSS payload" /><figcaption aria-hidden="true">Visible comment from ADD_HOST_COMMENT with hidden XSS payload</figcaption>
 </figure>
 
-The simplest payloads are those that allow an attacker to act as a web
-application administrator directly. While Nagios XI sets the ‘httponly’
-attribute on the session cookie, Nagios Core does not, which allows an
-attacker to exfiltrate the cookie directly and act as the administrator
-(presuming they can access the Nagios instance). But with the additional
-features of Nagios XI’s web application, attackers gain greater
-possibilities with XSS payloads, and on Nagios XI an administrator user
-can be added via XSS so the attacker can come back and directly
-administer the server or execute any of the other payloads.
+With the additional features of Nagios XI’s web application, attackers
+gain greater possibilities with XSS payloads, and on Nagios XI an
+administrator user can be added via XSS so the attacker can come back
+and directly administer the server or execute any of the other payloads.
 
 In addition to adding users, XSS payloads allow attackers to exercise
 much of the functionality of the web application, including uploading
@@ -935,8 +933,8 @@ root
 
 -   09/13/2021 - Vendor acknowledged disclosure
 
--   10/28/2021 - New versions of software released with patches
+-   11/02/2021 - New versions of software released with patches
 
--   10/28/2021 - NotQuite0DayFriday release
+-   11/02/2021 - NotQuite0DayFriday release
 
--   10/28/2021 - Blog post release
+-   11/02/2021 - Blog post release
