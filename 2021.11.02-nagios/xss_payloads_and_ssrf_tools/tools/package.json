@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.17.1",
+    "js-base64": "^3.6.1"
+  }
+}
