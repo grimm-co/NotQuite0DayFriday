@@ -105,15 +105,15 @@ in
 Figure <a href="#fig:stack" data-reference-type="ref" data-reference="fig:stack">3</a>.
 
 <figure>
-<img src="./images/unsubscribe.png" id="fig:unsubscribe" alt="Pre-Authentication Stack Overflow in gena_response_unsubscribe" /><figcaption aria-hidden="true">Pre-Authentication Stack Overflow in <code>gena_response_unsubscribe</code></figcaption>
+<img src="./images/unsubscribe.png" id="fig:unsubscribe" alt="Pre-Authentication Stack Overflow in gena_response_unsubscribe" /><figcaption aria-hidden="true">Figure 1: Pre-Authentication Stack Overflow in <code>gena_response_unsubscribe</code></figcaption>
 </figure>
 
 <figure>
-<img src="./images/strncpy.png" id="fig:strncpy" alt="strncpy With Assumed 1024 Length in find_token_get_val" /><figcaption aria-hidden="true"><code>strncpy</code> With Assumed 1024 Length in <code>find_token_get_val</code></figcaption>
+<img src="./images/strncpy.png" id="fig:strncpy" alt="strncpy With Assumed 1024 Length in find_token_get_val" /><figcaption aria-hidden="true">Figure 2: <code>strncpy</code> With Assumed 1024 Length in <code>find_token_get_val</code></figcaption>
 </figure>
 
 <figure>
-<img src="./images/stack.png" id="fig:stack" alt="Stack Layout During the Stack Overflow" /><figcaption aria-hidden="true">Stack Layout During the Stack Overflow</figcaption>
+<img src="./images/stack.png" id="fig:stack" alt="Stack Layout During the Stack Overflow" /><figcaption aria-hidden="true">Figure 3: Stack Layout During the Stack Overflow</figcaption>
 </figure>
 
 # Technical analysis
@@ -172,7 +172,7 @@ then references that variable when calling a non-stack based `system`
 gadget.
 
 <figure>
-<img src="./images/overflow.png" id="fig:overflow" alt="Stack Pointer Redirection" /><figcaption aria-hidden="true">Stack Pointer Redirection</figcaption>
+<img src="./images/overflow.png" id="fig:overflow" alt="Stack Pointer Redirection" /><figcaption aria-hidden="true">Figure 4: Stack Pointer Redirection</figcaption>
 </figure>
 
 ``` objectivec
@@ -199,7 +199,7 @@ RCE exploit will execute a custom command, which by default will start
 the telnet daemon on port 3333.
 
 <figure>
-<img src="./images/uuid_poc.png" id="fig:uuid_poc" alt="The UUID handler stack overflow PoC exploiting the upnpd server on the XR300" /><figcaption aria-hidden="true">The UUID handler stack overflow PoC exploiting the <code>upnpd</code> server on the XR300</figcaption>
+<img src="./images/uuid_poc.png" id="fig:uuid_poc" alt="The UUID handler stack overflow PoC exploiting the upnpd server on the XR300" /><figcaption aria-hidden="true">Figure 5: The UUID handler stack overflow PoC exploiting the <code>upnpd</code> server on the XR300</figcaption>
 </figure>
 
 The PoC has been written for and tested against the list of device and
@@ -235,7 +235,7 @@ functionality is fixed, the vulnerable code will once again be
 reachable, and the devices will be exploitable again.
 
 <figure>
-<img src="./images/r7000_uuid.png" id="fig:r7000_uuid" alt="Broken SUBSCRIBE and UNSUBSCRIBE handling within the R7000 1.0.11.123 firmware" /><figcaption aria-hidden="true">Broken SUBSCRIBE and UNSUBSCRIBE handling within the R7000 1.0.11.123 firmware</figcaption>
+<img src="./images/r7000_uuid.png" id="fig:r7000_uuid" alt="Broken SUBSCRIBE and UNSUBSCRIBE handling within the R7000 1.0.11.123 firmware" /><figcaption aria-hidden="true">Figure 6: Broken SUBSCRIBE and UNSUBSCRIBE handling within the R7000 1.0.11.123 firmware</figcaption>
 </figure>
 
 While only the developers know the source of this incorrect patch, we
@@ -275,11 +275,11 @@ In either case, the vulnerable UUID handler is reachable and can be
 exploited.
 
 <figure>
-<img src="./images/rs400_uuid.png" id="fig:rs400_uuid" alt="Unmitigated strcpy within the SUBSCRIBE and UNSUBSCRIBE handler in the RS400 1.5.0.68 firmware" /><figcaption aria-hidden="true">Unmitigated <code>strcpy</code> within the SUBSCRIBE and UNSUBSCRIBE handler in the RS400 1.5.0.68 firmware</figcaption>
+<img src="./images/rs400_uuid.png" id="fig:rs400_uuid" alt="Unmitigated strcpy within the SUBSCRIBE and UNSUBSCRIBE handler in the RS400 1.5.0.68 firmware" /><figcaption aria-hidden="true">Figure 7: Unmitigated <code>strcpy</code> within the SUBSCRIBE and UNSUBSCRIBE handler in the RS400 1.5.0.68 firmware</figcaption>
 </figure>
 
 <figure>
-<img src="./images/xr300_uuid.png" id="fig:xr300_uuid" alt="Correct SUBSCRIBE and UNSUBSCRIBE handling within the XR300 1.0.3.56 firmware" /><figcaption aria-hidden="true">Correct SUBSCRIBE and UNSUBSCRIBE handling within the XR300 1.0.3.56 firmware</figcaption>
+<img src="./images/xr300_uuid.png" id="fig:xr300_uuid" alt="Correct SUBSCRIBE and UNSUBSCRIBE handling within the XR300 1.0.3.56 firmware" /><figcaption aria-hidden="true">Figure 8: Correct SUBSCRIBE and UNSUBSCRIBE handling within the XR300 1.0.3.56 firmware</figcaption>
 </figure>
 
 # Timeline
