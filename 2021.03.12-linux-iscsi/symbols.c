@@ -28,6 +28,38 @@ struct kernel_symbols
 //The kernel base of the running system, which will be adjusted at runtime
 uint64_t KERNEL_BASE = 0xffffffff81000000UL;
 
+struct symbol_offset rhel_8_0_kernel_4_18_0_80_el8_symbols[] = {
+	{ .is_address = 1, .value = 0xffffffff810cbb50UL }, //PARAM_ARRAY_FREE
+	{ .is_address = 1, .value = 0xffffffff81810cb0UL }, //MEMCPY
+	{ .is_address = 1, .value = 0xffffffff810cfb00UL }, //RUN_CMD
+	{ .is_address = 1, .value = 0xffffffff817111a0UL }, //NETLINK_SOCK_DESTRUCT
+	{ .is_address = 1, .value = 0xffffffff822b4a70UL }, //MODULE_LIST_HEAD
+	{ .is_address = 1, .value = 0xffffffff82a14378UL }, //MODULE_KSET
+	{ .is_address = 1, .value = 0xffffffff81806f60UL }, //SEQ_BUF_PUTMEM
+	{ .is_address = 1, .value = 0xffffffff81807180UL }, //SEQ_BUF_TO_USER
+	{ .is_address = 0, .value = 0x340,               }, //MODULE_INFO_DIFF
+	{ .is_address = 0, .value = 0x0,                 }, //MODULE_STATUS_OFFSET
+	{ .is_address = 0, .value = 0x8,                 }, //MODULE_LIST_OFFSET
+	{ .is_address = 0, .value = 0x58,                }, //MODULE_KOBJ_LIST_OFFSET
+	{ .is_address = 0, .value = 0x328,               }, //MODULE_REFCNT_OFFSET
+};
+
+struct symbol_offset rhel_8_1_kernel_4_18_0_147_el8_symbols[] = {
+	{ .is_address = 1, .value = 0xffffffff810d23f0UL }, //PARAM_ARRAY_FREE
+	{ .is_address = 1, .value = 0xffffffff81857910UL }, //MEMCPY
+	{ .is_address = 1, .value = 0xffffffff810d63b0UL }, //RUN_CMD
+	{ .is_address = 1, .value = 0xffffffff8174dc90UL }, //NETLINK_SOCK_DESTRUCT
+	{ .is_address = 1, .value = 0xffffffff822b4ff0UL }, //MODULE_LIST_HEAD
+	{ .is_address = 1, .value = 0xffffffff82a33378UL }, //MODULE_KSET
+	{ .is_address = 1, .value = 0xffffffff8184ae70UL }, //SEQ_BUF_PUTMEM
+	{ .is_address = 1, .value = 0xffffffff8184b090UL }, //SEQ_BUF_TO_USER
+	{ .is_address = 0, .value = 0x340,               }, //MODULE_INFO_DIFF
+	{ .is_address = 0, .value = 0x0,                 }, //MODULE_STATUS_OFFSET
+	{ .is_address = 0, .value = 0x8,                 }, //MODULE_LIST_OFFSET
+	{ .is_address = 0, .value = 0x58,                }, //MODULE_KOBJ_LIST_OFFSET
+	{ .is_address = 0, .value = 0x328,               }, //MODULE_REFCNT_OFFSET
+};
+
 struct symbol_offset rhel_8_1_kernel_4_18_0_147_8_1_el8_1_symbols[] = {
 	{ .is_address = 1, .value = 0xffffffff810d2500UL }, //PARAM_ARRAY_FREE
 	{ .is_address = 1, .value = 0xffffffff81857910UL }, //MEMCPY
@@ -37,6 +69,22 @@ struct symbol_offset rhel_8_1_kernel_4_18_0_147_8_1_el8_1_symbols[] = {
 	{ .is_address = 1, .value = 0xffffffff82a33378UL }, //MODULE_KSET
 	{ .is_address = 1, .value = 0xffffffff8184ae70UL }, //SEQ_BUF_PUTMEM
 	{ .is_address = 1, .value = 0xffffffff8184b090UL }, //SEQ_BUF_TO_USER
+	{ .is_address = 0, .value = 0x340,               }, //MODULE_INFO_DIFF
+	{ .is_address = 0, .value = 0x0,                 }, //MODULE_STATUS_OFFSET
+	{ .is_address = 0, .value = 0x8,                 }, //MODULE_LIST_OFFSET
+	{ .is_address = 0, .value = 0x58,                }, //MODULE_KOBJ_LIST_OFFSET
+	{ .is_address = 0, .value = 0x328,               }, //MODULE_REFCNT_OFFSET
+};
+
+struct symbol_offset rhel_8_2_kernel_4_18_0_193_el8_symbols[] = {
+	{ .is_address = 1, .value = 0xffffffff810d3800UL }, //PARAM_ARRAY_FREE
+	{ .is_address = 1, .value = 0xffffffff81883b00UL }, //MEMCPY
+	{ .is_address = 1, .value = 0xffffffff810d78e0UL }, //RUN_CMD
+	{ .is_address = 1, .value = 0xffffffff81775170UL }, //NETLINK_SOCK_DESTRUCT
+	{ .is_address = 1, .value = 0xffffffff822adc30UL }, //MODULE_LIST_HEAD
+	{ .is_address = 1, .value = 0xffffffff82c14378UL }, //MODULE_KSET
+	{ .is_address = 1, .value = 0xffffffff81876830UL }, //SEQ_BUF_PUTMEM
+	{ .is_address = 1, .value = 0xffffffff81876a50UL }, //SEQ_BUF_TO_USER
 	{ .is_address = 0, .value = 0x340,               }, //MODULE_INFO_DIFF
 	{ .is_address = 0, .value = 0x0,                 }, //MODULE_STATUS_OFFSET
 	{ .is_address = 0, .value = 0x8,                 }, //MODULE_LIST_OFFSET
@@ -110,9 +158,18 @@ struct symbol_offset rhel_8_3_kernel_4_18_0_240_15_1_el8_3_symbols[] = {
 
 //The mapping of kernel versions to known symbols/offsets
 struct kernel_symbols  all_kernel_symbols[] = {
+	{ .symbols = rhel_8_0_kernel_4_18_0_80_el8_symbols,
+		.count = ARRAY_SIZE(rhel_8_0_kernel_4_18_0_80_el8_symbols),
+		.uname = "4.18.0-80.el8.x86_64" },
+	{ .symbols = rhel_8_1_kernel_4_18_0_147_el8_symbols,
+		.count = ARRAY_SIZE(rhel_8_1_kernel_4_18_0_147_el8_symbols),
+		.uname = "4.18.0-147.el8.x86_64" },
 	{ .symbols = rhel_8_1_kernel_4_18_0_147_8_1_el8_1_symbols,
 		.count = ARRAY_SIZE(rhel_8_1_kernel_4_18_0_147_8_1_el8_1_symbols),
 		.uname = "4.18.0-147.8.1.el8_1.x86_64" },
+	{ .symbols = rhel_8_2_kernel_4_18_0_193_el8_symbols,
+		.count = ARRAY_SIZE(rhel_8_2_kernel_4_18_0_193_el8_symbols),
+		.uname = "4.18.0-193.el8.x86_64" },
 	{ .symbols = rhel_8_2_kernel_4_18_0_193_14_3_el8_2_symbols,
 		.count = ARRAY_SIZE(rhel_8_2_kernel_4_18_0_193_14_3_el8_2_symbols),
 		.uname = "4.18.0-193.14.3.el8_2.x86_64" },
